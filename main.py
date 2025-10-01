@@ -1,0 +1,27 @@
+from langgraph.graph import StateGraph, START, END
+from knowledge_base import build_vectorstores
+from models import load_llm
+from nodes import State, retrieval_law_node, retrieval_manual_node, llm_node, response_node
+
+#벡터 db와 LLM모델 로드
+vectordb_law, vectordb_manual = build_vectorstores()
+llm = load_llm()
+
+#langgraph 정의
+graph = StateGraph(State)
+graph.add_node("retrieval_law", retrieval_law_node(vectordb_law))
+graph.add_node("retrieval_manual", retrieval_manual_node(vectordb_manual))
+graph.add_node("llm", llm_node(llm))
+graph.add_node("response", response_node)
+
+##langgraph 노드 추가
+graph.add_edge(START, "retrieval_law")
+graph.add_edge(START, "retrieval_manual")
+graph.add_edge("retrieval_law", "llm")
+graph.add_edge("retrieval_manual", "llm")
+graph.add_edge("llm", "response")
+graph.add_edge("response", END)
+
+if __name__ == "__main__":
+    app = graph.compile()
+    result = app.invoke({"query": "문서를 기반으로 본부장의 역할을 설명해줘"})
