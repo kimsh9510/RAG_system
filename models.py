@@ -1,7 +1,8 @@
 #LLM 모델 로드
 from langchain_huggingface import HuggingFaceEmbeddings
-from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
+from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline, TextStreamer
 from langchain_community.llms import HuggingFacePipeline
+import torch
 
 def load_embeddings():
     return HuggingFaceEmbeddings(
@@ -21,4 +22,26 @@ def load_llm():
         torch_dtype="auto"
     )
     pipe = pipeline("text-generation", model=model, tokenizer=tokenizer, max_new_tokens=512, truncation=True)
+    return HuggingFacePipeline(pipeline=pipe)
+
+def load_solar():
+    """Load Solar model (Llama-2-70b-instruct-v2) from Upstage"""
+    tokenizer = AutoTokenizer.from_pretrained("upstage/Llama-2-70b-instruct-v2")
+    model = AutoModelForCausalLM.from_pretrained(
+        "upstage/Llama-2-70b-instruct-v2",
+        device_map="auto",
+        torch_dtype=torch.float16,
+        load_in_8bit=True,
+        rope_scaling={"type": "dynamic", "factor": 2}  # allows handling of longer inputs
+    )
+    
+    # Create a pipeline for use with LangChain
+    pipe = pipeline(
+        "text-generation", 
+        model=model, 
+        tokenizer=tokenizer, 
+        max_new_tokens=512, 
+        truncation=True,
+        torch_dtype=torch.float16
+    )
     return HuggingFacePipeline(pipeline=pipe)
