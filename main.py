@@ -1,5 +1,15 @@
+import sys
+import os
+print("--- Python Debugging Info ---")
+print(f"실행 중인 파이썬 경로 (sys.executable): {sys.executable}")
+print("\n모듈을 찾는 경로 목록 (sys.path):")
+for p in sys.path:
+    print(f"  - {p}")
+print("--- End Debugging Info ---\n")
+
+
 from langgraph.graph import StateGraph, START, END
-from knowledge_base import build_vectorstores
+from knowledge_base_copy1 import build_vectorstores
 from models import load_llm
 from nodes import State, retrieval_law_node, retrieval_manual_node, llm_node, response_node
 
