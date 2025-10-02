@@ -7,13 +7,12 @@ from models import load_embeddings
 import glob
 import docx # python-docx
 import os
-
 import zipfile #hwpx 
 import xml.etree.ElementTree as ET #hwxp
+import pandas as pd
 
 ##4가지 data(기본데이터, 과거재난 데이터, 재난 관련 법령, 매뉴얼)로 확장
 ##각 data 리스트에 여러개의 파일 추가
-
 def load_all_documents_to_list(directory_path):
     all_documents = glob.glob(os.path.join(directory_path,"*"))
     
@@ -49,6 +48,11 @@ def load_all_documents_to_list(directory_path):
                     full_text=f.read()
                 documents.append(Document(page_content=full_text, metadata={"source":file_path}))
 
+            elif file_path.endswith(".xlsx"): #excel
+                df = pd.read_excel(file_path, sheet_name=0)  # 첫 번째 시트만 읽기
+                content = df.to_string(index=False)
+                documents.append(Document(page_content=content, metadata={"source": file_path}))
+
         except Exception as e:
             # 해당 파일은 건너뛰고 오류 메시지를 출력
             print(f"Error processing {file_path}: {e}")
@@ -58,15 +62,25 @@ def load_all_documents_to_list(directory_path):
 
 def build_vectorstores():
     """문서 분할 + 벡터DB 생성"""
-    law_docs, manual_docs = load_all_documents_to_list("Dataset/관련법령"), load_all_documents_to_list("Dataset/매뉴얼")
+    law_docs = load_all_documents_to_list("Dataset/관련법령")
+    manual_docs = load_all_documents_to_list("Dataset/매뉴얼")
+    basic_docs = load_all_documents_to_list("Dataset/기본데이터")
+    past_docs = load_all_documents_to_list("Dataset/과거재난데이터")
+
+    #law_docs, manual_docs = load_all_documents_to_list("Dataset_for_test/과거재난데이터"), load_all_documents_to_list("Dataset_for_test/매뉴얼")
     splitter = CharacterTextSplitter(chunk_size=200, chunk_overlap=0)
 
     law_splits = splitter.split_documents(law_docs)
     manual_splits = splitter.split_documents(manual_docs)
+    basic_splits = splitter.split_documents(basic_docs)
+    past_splits = splitter.split_documents(past_docs)
 
     embeddings = load_embeddings()
+
     vectordb_law = FAISS.from_documents(law_splits, embeddings)
     vectordb_manual = FAISS.from_documents(manual_splits, embeddings)
+    vectordb_basic = FAISS.from_documents(basic_splits, embeddings)
+    vectordb_past = FAISS.from_documents(past_splits, embeddings)
 
-    return vectordb_law, vectordb_manual
+    return vectordb_law, vectordb_manual, vectordb_basic, vectordb_past
 

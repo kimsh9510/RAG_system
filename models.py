@@ -12,11 +12,13 @@ def load_embeddings():
 
 def load_llm():
     model_id = "Qwen/Qwen2-7B-Instruct"
+    #model_id = "Qwen/Qwen2-1.5B-Instruct" #소형모델
+    
     tokenizer = AutoTokenizer.from_pretrained(model_id)
     model = AutoModelForCausalLM.from_pretrained(
         model_id,
         device_map="auto",
         torch_dtype="auto"
     )
-    pipe = pipeline("text-generation", model=model, tokenizer=tokenizer, max_new_tokens=512)
+    pipe = pipeline("text-generation", model=model, tokenizer=tokenizer, max_new_tokens=512, truncation=True)
     return HuggingFacePipeline(pipeline=pipe)
