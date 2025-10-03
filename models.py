@@ -45,3 +45,26 @@ def load_solar():
         torch_dtype=torch.float16
     )
     return HuggingFacePipeline(pipeline=pipe)
+
+def load_solar_pro():
+    """Load Solar Pro model (solar-pro-preview-instruct) from Upstage"""
+    tokenizer = AutoTokenizer.from_pretrained("upstage/solar-pro-preview-instruct")
+    model = AutoModelForCausalLM.from_pretrained(
+        "upstage/solar-pro-preview-instruct",
+        device_map="cuda",  
+        torch_dtype="auto",  
+        trust_remote_code=True,
+    )
+    
+    # Create a pipeline for use with LangChain
+    pipe = pipeline(
+        "text-generation", 
+        model=model, 
+        tokenizer=tokenizer, 
+        max_new_tokens=512, 
+        truncation=True,
+        do_sample=True,
+        temperature=0.7,
+        pad_token_id=tokenizer.pad_token_id if tokenizer.pad_token_id else tokenizer.eos_token_id
+    )
+    return HuggingFacePipeline(pipeline=pipe)
