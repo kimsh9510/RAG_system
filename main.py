@@ -32,4 +32,5 @@ graph.add_edge("response", END)
 
 if __name__ == "__main__":
     app = graph.compile()
-    result = app.invoke({"query": "문서를 기반으로 본부장의 역할을 설명해줘"})
+    #query 내용을 기반으로 문서 탐색
+    result = app.invoke({"query": "태풍 발생 시 파생될 수 있는 재난 유형과 대응 매뉴얼"})

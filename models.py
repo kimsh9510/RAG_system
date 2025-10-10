@@ -20,5 +20,10 @@ def load_llm():
         device_map="auto",
         torch_dtype="auto"
     )
-    pipe = pipeline("text-generation", model=model, tokenizer=tokenizer, max_new_tokens=512, truncation=True)
+    pipe = pipeline("text-generation", 
+                    model=model, 
+                    tokenizer=tokenizer, 
+                    max_length=2048,
+                    max_new_tokens=1024,
+                    truncation=True)
     return HuggingFacePipeline(pipeline=pipe)
