@@ -11,7 +11,6 @@ class State(TypedDict, total=False):
     past_ctx: str
     answer: str
 
-##retrieval_past_node 추가
 def retrieval_law_node(vectordb_law):
     def node(state: State):
         q = state["query"]
@@ -53,12 +52,23 @@ def llm_node(llm):
             parts.append("[과거재난데이터]\n" + state["past_ctx"])
         context = "\n\n".join(parts)
 
-        prompt = f"""당신은 재난 대응 전문가입니다. 아래 참고 문서를 근거로만 답하세요.
+        ##사용자 요청: 쿼리 문이 꼭 추가되어야 하는지 확인
+        prompt = f"""당신은 지역재난안전대책본부의 통제관입니다.
+                아래 문서는 법, 매뉴얼, 기본데이터, 과거재난 데이터를 통합하고 있습니다.
+                {context}
 
-{context}
+                문서를 바탕으로 다음 두가지를 작성하세요.
+                1. [연계 재난 탐지]
+                "태풍"이 발생했을 때, 함께 발생하거나 영향을 줄 수 있는 연계 재난을 3가지 정도 나열하세요.
+                각 재난은 왜 발생하는지(원인)와 어떤 피해로 이어지는지도 간단히 설명하세요.  
+                
+                2. [대응 시나리오]
+                위에서 탐지된 각 연계 재난 유형별로, 아래 매뉴얼 문서를 바탕으로 단계별 대응 절차를 제시하세요.
+                {state.get("manual_ctx", "")}
 
-질문: {state['query']}
-답변:"""
+                사용자 요청:
+                {state['query']} 
+                """
         answer = llm.invoke(prompt)
         return {"answer": answer}
     return node
