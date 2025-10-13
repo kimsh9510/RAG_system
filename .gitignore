@@ -1,6 +1,5 @@
 #데이터셋 폴더 무시
 Dataset/
-Dataset copy/
 
 #파이썬 캐시 무시
 __pychche__/
