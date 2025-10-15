@@ -46,7 +46,7 @@ def load_all_documents_to_list(directory_path):
                     full_text=f.read()
                 documents.append(Document(page_content=full_text, metadata={"source":file_path}))
 
-            elif file_path.endswith(".xlsx"): #excel-모바일상황실 접수 현황 엑셀 기준
+            elif file_path.endswith(".xlsx"): #excel(모바일상황실 접수 현황 검토중_240705_16시40분까지 (1).xlxs 파일만 적용)
                 """ 읽어올 데이터 
                 1. 1행 G열
                 2. 2행~끝까지 F(유형),G(세부사항),H(주소),O(최종소요시간),V(첫 조치 소요시간) 행 
@@ -78,8 +78,26 @@ def load_all_documents_to_list(directory_path):
         except Exception as e:
             # 해당 파일은 건너뛰고 오류 메시지를 출력
             print(f"Error processing {file_path}: {e}")
-
+    print(documents)
     return documents
+
+def parse_multiline_cell(cell_text):
+    """
+    "키: 값" 형태의 여러 줄 문자열을 딕셔너리로 변환
+    """
+    if not isinstance(cell_text, str):
+        return {}
+        
+    data_dict = {}
+    lines = cell_text.splitlines() #\n 기준 나누기
+    
+    for line in lines:
+        # 2. 각 줄을 ':' 기준으로 -> ['유형', '연쇄사항']
+        if ':' in line:
+            key, value = line.split(':', 1)
+            data_dict[key.strip()] = value.strip()
+            
+    return data_dict
 
 
 def build_vectorstores():
