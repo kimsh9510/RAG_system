@@ -1,3 +1,4 @@
+import langchain_core
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.llms import HuggingFacePipeline
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
@@ -85,19 +86,8 @@ def load_solar_pro(model_id: str = "upstage/solar-pro-preview-instruct", max_new
     return HuggingFacePipeline(pipeline=pipe)
 
 def load_solar_pro2(model_id: str = "solar-pro2", reasoning_effort: str = "minimal", max_new_tokens: int = 1024, temperature: float = 0.7):
-    """
-    Initialize Solar Pro 2 model via the Upstage API (langchain-upstage wrapper).
-
-    Returns a small client with:
-      - invoke(prompt: str) -> str
-      - with_structured_output(json_schema: dict) -> object with invoke(prompt: str) -> dict
-
-    The function reads the API key from the environment variable 'UPSTAGE_API_KEY'.
-    If you store the token under a different name, either set UPSTAGE_API_KEY or update this function.
-    """
-    # ensure the required packages are installed before importing
-    _ensure_packages(["langchain-core", "langchain-upstage"])
-
+    _ensure_packages(["langchain-core", "langchain-upstage"]) #ensure the required packages are installed
+    
     # lazy import to avoid hard dependency at module import time
     from langchain_upstage import ChatUpstage
     try:
@@ -115,7 +105,7 @@ def load_solar_pro2(model_id: str = "solar-pro2", reasoning_effort: str = "minim
 
             class SystemMessage(HumanMessage):
                 pass
-
+            
     load_dotenv()
     token = os.environ.get("UPSTAGE_API_KEY") or os.environ.get("SOLAR_PRO_API_KEY") or os.environ.get("HF_HUB_TOKEN")
     if not token:
@@ -130,12 +120,6 @@ def load_solar_pro2(model_id: str = "solar-pro2", reasoning_effort: str = "minim
             self.temperature = temperature
 
         def invoke(self, prompt: str, *, reasoning_effort: str | None = None, response_format: dict | None = None, **kwargs):
-            """
-            Invoke the Solar Pro 2 model with a simple prompt string.
-            Returns a string for text responses; if the underlying client returns a dict it will
-            attempt to extract the assistant's content.
-            Additional completion kwargs are passed through to the underlying client.
-            """
             messages = [HumanMessage(content=prompt)]
             # prefer per-call reasoning_effort if provided
             call_kwargs = {"max_tokens": self.max_new_tokens, "temperature": self.temperature}
@@ -173,10 +157,6 @@ def load_solar_pro2(model_id: str = "solar-pro2", reasoning_effort: str = "minim
                 return str(resp)
 
         def with_structured_output(self, json_schema: dict):
-            """
-            Return a structured-output wrapper which will request the model to follow the provided JSON Schema.
-            The returned object exposes invoke(prompt: str) and will return the parsed structured result (likely a dict).
-            """
             structured_llm = self.chat.with_structured_output({"type": "json_schema", "json_schema": json_schema})
 
             class StructuredWrapper:
@@ -192,7 +172,7 @@ def load_solar_pro2(model_id: str = "solar-pro2", reasoning_effort: str = "minim
 
     return SolarPro2Client(chat)
 
-def load_EXAONE(model_id: str = "LGAI-EXAONE/EXAONE-4.0.1-32B", max_new_tokens: int = 512):
+def load_EXAONE(model_id: str = "LGAI-EXAONE/EXAONE-4.0.1-32B", max_new_tokens: int = 10024):
     _ensure_packages(["transformers>=4.54.0", "accelerate", "bitsandbytes"])
     import gc
 
@@ -223,3 +203,150 @@ def load_EXAONE(model_id: str = "LGAI-EXAONE/EXAONE-4.0.1-32B", max_new_tokens: 
         truncation=True,
     )
     return HuggingFacePipeline(pipeline=gen)
+
+def load_EXAONE_api(model_id: str = "dep9i05uqo2xp7u", max_new_tokens: int = 512, base_url: str = "https://api.friendli.ai/dedicated"):
+    _ensure_packages(["openai", "requests"])  # ensure both SDK and requests are available
+
+    load_dotenv()
+    token = os.environ.get("FRIENDLI_TOKEN") or os.environ.get("EXAONE_API_KEY")
+    team = os.environ.get("FRIENDLI_TEAM")
+    if not token:
+        raise RuntimeError("EXAONE API key not found. Please set FRIENDLI_TOKEN or EXAONE_API_KEY in your .env or environment.")
+
+    # Try to use the OpenAI-compatible SDK (Friendli provides an OpenAI-compatible API surface)
+    OpenAI = None
+    try:
+        from openai import OpenAI as _OpenAI
+        OpenAI = _OpenAI
+    except Exception:
+        try:
+            import openai as _openai_module
+            OpenAI = getattr(_openai_module, "OpenAI", None)
+        except Exception:
+            OpenAI = None
+
+    # For dedicated endpoints the path is under the dedicated prefix; when base_url is
+    # https://api.friendli.ai/dedicated the REST path for chat completions is /v1/chat/completions
+    endpoint_path = "/v1/chat/completions"
+
+    class EXAONEApiClient:
+        def __init__(self, token: str, model_id: str, max_new_tokens: int, base_url: str, team: str | None = None, sdk_client=None):
+            self.token = token
+            self.model_id = model_id
+            self.max_new_tokens = max_new_tokens
+            self.base_url = base_url.rstrip("/")
+            self.team = team
+            self.sdk_client = sdk_client
+
+        def _http_request(self, body: dict):
+            import requests
+            url = f"{self.base_url}{endpoint_path}"
+            headers = {"Authorization": f"Bearer {self.token}", "Content-Type": "application/json"}
+            if self.team:
+                headers["X-Friendli-Team"] = self.team
+            resp = requests.post(url, headers=headers, json=body, timeout=60)
+            if resp.status_code == 401 or resp.status_code == 403:
+                raise RuntimeError(f"Authentication failed when calling Friendli API: HTTP {resp.status_code}. Check FRIENDLI_TOKEN and team header.")
+            resp.raise_for_status()
+            return resp.json()
+
+        def invoke(self, prompt: str, **kwargs):
+            # messages per Friendli OpenAPI
+            messages = [
+                {"role": "system", "content": "You are a helpful assistant."},
+                {"role": "user", "content": prompt},
+            ]
+
+            params = {
+                "model": self.model_id,
+                "messages": messages,
+                "max_tokens": kwargs.pop("max_tokens", self.max_new_tokens),
+            }
+            params.update(kwargs)
+
+            # 1) If SDK is available, try it first
+            if self.sdk_client is not None:
+                try:
+                    completion = self.sdk_client.chat.completions.create(**params)
+                    try:
+                        return completion.choices[0].message.content
+                    except Exception:
+                        return str(completion)
+                except Exception as e:
+                    # If permission/auth error, surface a friendly message and fall back to HTTP
+                    name = getattr(e, "__class__", type(e)).__name__
+                    if name in ("PermissionDeniedError", "AuthenticationError"):
+                        raise RuntimeError(
+                            "Authentication with Friendli SDK failed. Check FRIENDLI_TOKEN, FRIENDLI_TEAM and that the token has inference permissions."
+                        ) from e
+                    # otherwise we'll try HTTP fallback below
+
+            # 2) HTTP fallback
+            try:
+                resp = self._http_request(params)
+                # expected structure: {choices: [{message: {content: "..."}}], ...}
+                choices = resp.get("choices")
+                if choices and isinstance(choices, list) and len(choices) > 0:
+                    msg = choices[0].get("message") or {}
+                    content = msg.get("content")
+                    if content is not None:
+                        return content
+                # final fallback
+                return str(resp)
+            except Exception as e:
+                raise
+
+        def with_structured_output(self, json_schema: dict):
+            # Use instruction + response_format where possible. Friendli supports response_format param.
+            def invoke_structured(prompt: str, **kwargs):
+                instruct = (
+                    "You are to produce ONLY a JSON object that strictly follows the provided JSON Schema. "
+                    "Do not add any commentary.\n\n"
+                )
+                body = {
+                    "model": self.model_id,
+                    "messages": [
+                        {"role": "system", "content": "You are a JSON API returning strictly formatted JSON."},
+                        {"role": "user", "content": instruct + prompt},
+                    ],
+                    "response_format": {"type": "json_schema", "json_schema": {"schema": json_schema}},
+                    "max_tokens": kwargs.pop("max_tokens", self.max_new_tokens),
+                }
+                body.update(kwargs)
+
+                # Try HTTP request (prefer explicit control)
+                resp = self._http_request(body)
+                # Friendli may include the parsed object or a content string
+                choices = resp.get("choices") or []
+                if choices:
+                    msg = choices[0].get("message") or {}
+                    content = msg.get("content")
+                    # If server returned structured parse in a field, try to extract reasoning_content or parsed JSON
+                    if isinstance(content, dict):
+                        return content
+                    # otherwise try to parse JSON string
+                    import json
+                    try:
+                        return json.loads(content)
+                    except Exception:
+                        return content
+                return resp
+
+            class StructuredWrapper:
+                def __init__(self, fn):
+                    self._fn = fn
+
+                def invoke(self, prompt: str, **kwargs):
+                    return self._fn(prompt, **kwargs)
+
+            return StructuredWrapper(invoke_structured)
+
+    # instantiate client wrapper
+    sdk_client = None
+    if OpenAI is not None:
+        try:
+            sdk_client = OpenAI(api_key=token, base_url=base_url)
+        except Exception:
+            sdk_client = None
+
+    return EXAONEApiClient(token=token, model_id=model_id, max_new_tokens=max_new_tokens, base_url=base_url, team=team, sdk_client=sdk_client)
