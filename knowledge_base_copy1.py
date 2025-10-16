@@ -11,8 +11,6 @@ import zipfile #hwpx
 import xml.etree.ElementTree as ET #hwxp
 import pandas as pd
 
-##4가지 data(기본데이터, 과거재난 데이터, 재난 관련 법령, 매뉴얼)로 확장
-##각 data 리스트에 여러개의 파일 추가
 def load_all_documents_to_list(directory_path):
     all_documents = glob.glob(os.path.join(directory_path,"*"))
     
@@ -48,16 +46,58 @@ def load_all_documents_to_list(directory_path):
                     full_text=f.read()
                 documents.append(Document(page_content=full_text, metadata={"source":file_path}))
 
-            elif file_path.endswith(".xlsx"): #excel
-                df = pd.read_excel(file_path, sheet_name=0)  # 첫 번째 시트만 읽기
-                content = df.to_string(index=False)
-                documents.append(Document(page_content=content, metadata={"source": file_path}))
+            elif file_path.endswith(".xlsx"): #excel(모바일상황실 접수 현황 검토중_240705_16시40분까지 (1).xlxs 파일만 적용)
+                """ 읽어올 데이터 
+                1. 1행 G열
+                2. 2행~끝까지 F(유형),G(세부사항),H(주소),O(최종소요시간),V(첫 조치 소요시간) 행 
+                """
+                #1행 G열 데이터 읽기 (딕셔너리 형태로 받아옴)
+                df1 = pd.read_excel(file_path, sheet_name=0,header=None, nrows=1)  # 첫 번째 시트만 읽기, 첫행 데이터로 취급, 1행의 G열만 필요 : 1행만 읽기 
+                g_value = df1.iloc[0,6]
+                parse_data_g_value = parse_multiline_cell(g_value)
+                header_content = ", ".join([f"{k}: {v}" for k, v in parse_data_g_value.items()])
+                doc = Document(
+                    page_content=f"문서 요약 정보: {header_content}",
+                    metadata={"source": os.path.basename(file_path), "section": "header"}
+                )
+                documents.append(doc)
+
+                #2행부터 끝까지 읽어옴
+                df2= pd.read_excel(file_path, sheet_name=0, header=1, usecols="F,G,H,O,V")
+                for index, row in df2.iterrows():
+                    row_content = ", ".join([f"{col}: {val}" for col, val in row.items() if pd.notna(val)])
+                    doc = Document(
+                        page_content=row_content,
+                        metadata={
+                            "source": os.path.basename(file_path),
+                            "row": index + 3 # 엑셀 실제 행 번호와 맞춤
+                        }
+                    )
+                    documents.append(doc)
 
         except Exception as e:
             # 해당 파일은 건너뛰고 오류 메시지를 출력
             print(f"Error processing {file_path}: {e}")
-
+    print(documents)
     return documents
+
+def parse_multiline_cell(cell_text):
+    """
+    "키: 값" 형태의 여러 줄 문자열을 딕셔너리로 변환
+    """
+    if not isinstance(cell_text, str):
+        return {}
+        
+    data_dict = {}
+    lines = cell_text.splitlines() #\n 기준 나누기
+    
+    for line in lines:
+        # 2. 각 줄을 ':' 기준으로 -> ['유형', '연쇄사항']
+        if ':' in line:
+            key, value = line.split(':', 1)
+            data_dict[key.strip()] = value.strip()
+            
+    return data_dict
 
 
 def build_vectorstores():
@@ -83,4 +123,3 @@ def build_vectorstores():
     vectordb_past = FAISS.from_documents(past_splits, embeddings)
 
     return vectordb_law, vectordb_manual, vectordb_basic, vectordb_past
-

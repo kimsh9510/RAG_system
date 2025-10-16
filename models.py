@@ -32,7 +32,7 @@ def load_llm(model_id: str = "Qwen/Qwen2-7B-Instruct", max_new_tokens: int = 512
     return HuggingFacePipeline(pipeline=gen)
 
 def load_llama3(model_id: str = "meta-llama/Meta-Llama-3.1-8B-Instruct", max_new_tokens: int = 512):
-    _ensure_packages(["transformers>=4.44.0", "accelerate", "bitsandbytes"])
+    _ensure_packages(["transformers==4.42.3", "accelerate", "bitsandbytes"])
     load_dotenv()
     token = os.environ.get("HUGGINGFACE_TOKEN") or os.environ.get("HF_HUB_TOKEN")
     if token:
