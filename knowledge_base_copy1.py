@@ -78,7 +78,7 @@ def load_all_documents_to_list(directory_path):
         except Exception as e:
             # 해당 파일은 건너뛰고 오류 메시지를 출력
             print(f"Error processing {file_path}: {e}")
-    print(documents)
+    #print(documents)
     return documents
 
 def parse_multiline_cell(cell_text):

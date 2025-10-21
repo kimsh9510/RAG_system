@@ -7,7 +7,7 @@ from nodes import State, retrieval_law_node, retrieval_manual_node, retrieval_ba
 
 #벡터 db와 LLM모델 로드
 vectordb_law, vectordb_manual, vectordb_basic, vectordb_past = build_vectorstores()
-llm = load_qwen()
+llm = load_llama3()
 
 #langgraph 정의
 graph = StateGraph(State)
@@ -33,4 +33,14 @@ graph.add_edge("response", END)
 if __name__ == "__main__":
     app = graph.compile()
     #query 내용을 기반으로 문서 탐색
-    result = app.invoke({"query": "태풍 발생 시 파생될 수 있는 재난 유형과 대응 매뉴얼"})
+    result = app.invoke({
+        "query": "태풍 발생 시 파생될 수 있는 재난 유형과 대응 매뉴얼",
+        "location": "서울시",
+        "disaster": "태풍"
+    })
+    
+    #실제 추출되는 문서내용 출력
+    #docs = vectordb_manual.similarity_search("태풍 또는 풍수해 발생 시 파생 재난 유형, 연계재난, 대응 절차, 긴급복구 관련 법령", k=5)
+    #for i, d in enumerate(docs, 1):
+    #    print(f"\n[{i}] 파일: {d.metadata.get('source', 'unknown')}")
+    #    print(d.page_content[:300]) 

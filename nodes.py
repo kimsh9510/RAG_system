@@ -5,6 +5,8 @@ from langchain.schema import Document
 
 class State(TypedDict, total=False):
     query: str
+    location : str
+    disaster : str
     law_ctx: str
     manual_ctx: str
     basic_ctx: str
@@ -41,6 +43,10 @@ def retrieval_past_node(vectordb_past):
 
 def llm_node(llm):
     def node(state: State):
+        ######다시 테스트하기 반영이 안됨
+        location = state.get("location") or "대한민국"
+        disaster = state.get("disaster") or "재난"
+
         parts = []
         if "law_ctx" in state:
             parts.append("[법]\n" + state["law_ctx"])
@@ -54,6 +60,8 @@ def llm_node(llm):
 
         ##사용자 요청: 쿼리 문이 꼭 추가되어야 하는지 확인
         prompt = f"""당신은 지역재난안전대책본부의 통제관입니다.
+                {location}에서 발생한 {disaster} 관련하여 재난 예측 및 대응 시나리오를 생성하려고 합니다.
+
                 아래 문서는 법, 매뉴얼, 기본데이터, 과거재난 데이터를 통합하고 있습니다.
                 {context}
 
@@ -65,10 +73,8 @@ def llm_node(llm):
                 2. [대응 시나리오]
                 위에서 탐지된 각 연계 재난 유형별로, 아래 매뉴얼 문서를 바탕으로 단계별 대응 절차를 제시하세요.
                 {state.get("manual_ctx", "")}
-
-                사용자 요청:
-                {state['query']} 
                 """
+        
         answer = llm.invoke(prompt)
         return {"answer": answer}
     return node
