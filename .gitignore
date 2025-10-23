@@ -11,3 +11,5 @@ __pycache__/
 
 #가상환경 폴더 무시
 .venv/
+fire_station_zones.html
+fire_stations_map.png
