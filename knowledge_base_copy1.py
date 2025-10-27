@@ -1,5 +1,6 @@
 #벡터 DB구축 - > 지식그래프 DB로 변경 예정
 from PyPDF2 import PdfReader
+import pdfplumber
 from langchain.schema import Document
 from langchain.text_splitter import CharacterTextSplitter
 from langchain_community.vectorstores import FAISS
@@ -10,9 +11,8 @@ import os
 import zipfile #hwpx 
 import xml.etree.ElementTree as ET #hwxp
 import pandas as pd
+import re
 
-##4가지 data(기본데이터, 과거재난 데이터, 재난 관련 법령, 매뉴얼)로 확장
-##각 data 리스트에 여러개의 파일 추가
 def load_all_documents_to_list(directory_path):
     all_documents = glob.glob(os.path.join(directory_path,"*"))
     
@@ -21,15 +21,32 @@ def load_all_documents_to_list(directory_path):
     for file_path in all_documents:
         try:
             if file_path.endswith(".pdf"): #확장자 pdf로 끝나는 경우 
-                reader=PdfReader(file_path)
-                for page_num, page in enumerate(reader.pages):
-                    text = page.extract_text() or ""
-                    documents.append(Document(page_content=text, metadata={"source": file_path, "page": page_num}))
-
+                with pdfplumber.open(file_path) as pdf:
+                    for page_num, page in enumerate(pdf.pages):
+                        #일반 텍스트 추출 
+                        text = page.extract_text() or ""
+                        
+                        #표 데이터 추출
+                        tables = page.extract_tables()
+                        table_text = ""
+                        if tables:
+                            for table in tables:
+                                # 추출된 표 데이터를 문자열로 변환-
+                                table_text += "\n\n--- TABLE START ---\n"
+                                for row in table:
+                                    table_text += " | ".join(map(str, row)) + "\n"
+                                table_text += "--- TABLE END ---\n\n"
+                        
+                        # 텍스트와 표 텍스트를 합쳐 Document 생성
+                        full_content = text + table_text
+                        documents.append(Document(page_content=full_content, metadata={"source": file_path, "page": page_num}))
+                        #print(f" 성공: PDF 파일 처리 완료 -> {file_path}, 총 {len(reader.pages)} 페이지 추출 ",flush=True)
+                
             elif file_path.endswith(".docx"): #docx로 끝나는 경우
                 doc = docx.Document(file_path)
                 full_text = "\n".join([para.text for para in doc.paragraphs])
                 documents.append(Document(page_content=full_text,metadata={"source": file_path}))
+                #print(f" 성공: DOCX 파일 처리 완료 -> {file_path}, 텍스트 길이: {len(full_text)}",flush=True)
 
             elif file_path.endswith(".hwpx"):
                 full_text=""
@@ -42,22 +59,78 @@ def load_all_documents_to_list(directory_path):
                             if text_element.text:
                                 full_text += text_element.text + "\n"
                 documents.append(Document(page_content=full_text, metadata={"source":file_path}))
+                #print(f" 성공: HWPX 파일 처리 완료 -> {file_path}, 텍스트 길이: {len(full_text)}",flush=True)
+            
+            elif file_path.endswith(".txt"): # 확장자가 .txt로 끝나는 경우
+                # 'r' 모드(읽기 전용), 'utf-8' 인코딩으로 파일을 엽니다.
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    raw_text = f.read() 
+                    pattern = r'^.*사진.*$\n?' 
+                    full_text = re.sub(pattern, '', raw_text, flags=re.MULTILINE)
+                documents.append(
+                    Document(
+                        page_content=full_text, 
+                        metadata={"source": os.path.basename(file_path)}
+                    )
+                )
+                #print(f" 성공: TXT 파일 처리 완료 -> {file_path}, 텍스트 길이: {len(full_text)}", flush=True)
+            
+            
+            elif file_path.endswith(".xlsx"): #excel(모바일상황실 접수 현황 검토중_240705_16시40분까지 (1).xlxs 파일만 적용)
+                """ 읽어올 데이터 
+                1. 1행 G열
+                2. 2행~끝까지 F(유형),G(세부사항),H(주소),O(최종소요시간),V(첫 조치 소요시간) 행 
+                """
+                #1행 G열 데이터 읽기 (딕셔너리 형태로 받아옴)
+                df1 = pd.read_excel(file_path, sheet_name=0,header=None, nrows=1)  # 첫 번째 시트만 읽기, 첫행 데이터로 취급, 1행의 G열만 필요 : 1행만 읽기 
+                g_value = df1.iloc[0,6]
+                parse_data_g_value = parse_multiline_cell(g_value)
+                header_content = ", ".join([f"{k}: {v}" for k, v in parse_data_g_value.items()])
+                doc = Document(
+                    page_content=f"문서 요약 정보: {header_content}",
+                    metadata={"source": os.path.basename(file_path), "section": "header"}
+                )
+                documents.append(doc)
 
-            elif file_path.endswith(".txt"): #txt 
-                with open(file_path,'r', encoding='utf-8') as f:
-                    full_text=f.read()
-                documents.append(Document(page_content=full_text, metadata={"source":file_path}))
-
-            elif file_path.endswith(".xlsx"): #excel
-                df = pd.read_excel(file_path, sheet_name=0)  # 첫 번째 시트만 읽기
-                content = df.to_string(index=False)
-                documents.append(Document(page_content=content, metadata={"source": file_path}))
+                #2행부터 끝까지 읽어옴
+                df2= pd.read_excel(file_path, sheet_name=0, header=1, usecols="F,G,H,O,V")
+                rows_added = 0
+                for index, row in df2.iterrows():
+                    row_content = ", ".join([f"{col}: {val}" for col, val in row.items() if pd.notna(val)])
+                    doc = Document(
+                        page_content=row_content,
+                        metadata={
+                            "source": os.path.basename(file_path),
+                            "row": index + 3 # 엑셀 실제 행 번호와 맞춤
+                        }
+                    )
+                    documents.append(doc)
+                    rows_added += 1
+                #print(f" 성공: XLSX 본문 데이터 추출 완료 -> {os.path.basename(file_path)}, 총 {rows_added}개 행 추출",flush=True)
 
         except Exception as e:
             # 해당 파일은 건너뛰고 오류 메시지를 출력
             print(f"Error processing {file_path}: {e}")
-
+    #print(documents)
     return documents
+
+def parse_multiline_cell(cell_text):
+    """
+    "키: 값" 형태의 여러 줄 문자열을 딕셔너리로 변환
+    """
+    if not isinstance(cell_text, str):
+        return {}
+        
+    data_dict = {}
+    lines = cell_text.splitlines() #\n 기준 나누기
+    
+    for line in lines:
+        # 2. 각 줄을 ':' 기준으로 -> ['유형', '연쇄사항']
+        if ':' in line:
+            key, value = line.split(':', 1)
+            data_dict[key.strip()] = value.strip()
+            
+    return data_dict
 
 
 def build_vectorstores():

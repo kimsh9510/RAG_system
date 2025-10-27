@@ -22,7 +22,7 @@ def retrieval_law_node(vectordb_law):
 def retrieval_manual_node(vectordb_manual):
     def node(state: State):
         q = state["query"]
-        docs = vectordb_manual.similarity_search(q, k=2)
+        docs = vectordb_manual.similarity_search(q, k=30)
         return {"manual_ctx": "\n".join(d.page_content for d in docs)}
     return node
 
@@ -42,6 +42,12 @@ def retrieval_past_node(vectordb_past):
 
 def llm_node(llm):
     def node(state: State):
+        #디버깅 코드
+        law_content = state.get("law_ctx", "")
+        manual_content = state.get("manual_ctx", "")
+        basic_content = state.get("basic_ctx", "")
+        past_content = state.get("past_ctx", "")
+        #---
         parts = []
         if "law_ctx" in state:
             parts.append("[법]\n" + state["law_ctx"])
@@ -53,7 +59,11 @@ def llm_node(llm):
             parts.append("[과거재난데이터]\n" + state["past_ctx"])
         context = "\n\n".join(parts)
 
-        prompt = f"""당신은 재난 대응 전문가입니다. 아래 참고 문서를 근거로만 답하세요.
+        ##사용자 요청: 쿼리 문이 꼭 추가되어야 하는지 확인
+        prompt = f"""당신은 지역재난안전대책본부의 통제관입니다.
+                아래 문서는 법, 매뉴얼, 기본데이터, 과거재난 데이터를 통합하고 있습니다.
+                {context}
+
 
 {context}
 
