@@ -134,12 +134,8 @@ def parse_multiline_cell(cell_text):
 def build_vectorstores():
     """문서 분할 + 벡터DB 생성"""
     law_docs = load_all_documents_to_list("Dataset/관련법령")
-    folder_path = "Dataset/관련법령"
-    file_names = os.listdir(folder_path)
-
-    print("관련법령 폴더 내 문서 목록:")
-    for name in file_names:
-        print("-", name)
+    law_flooding_docs = load_all_documents_to_list("Dataset/관련법령/법령_풍수해")
+    law_blackout_docs = load_all_documents_to_list("Dataset/관련법령/법령_정전")
     manual_docs = load_all_documents_to_list("Dataset/매뉴얼")
     basic_docs = load_all_documents_to_list("Dataset/기본데이터")
     past_docs = load_all_documents_to_list("Dataset/과거재난데이터")
@@ -148,6 +144,8 @@ def build_vectorstores():
     splitter = CharacterTextSplitter(chunk_size=200, chunk_overlap=0)
 
     law_splits = splitter.split_documents(law_docs)
+    law_flooding_splits = splitter.split_documents(law_flooding_docs)
+    law_blackout_splits = splitter.split_documents(law_blackout_docs)
     manual_splits = splitter.split_documents(manual_docs)
     basic_splits = splitter.split_documents(basic_docs)
     past_splits = splitter.split_documents(past_docs)
@@ -155,9 +153,11 @@ def build_vectorstores():
     embeddings = load_embeddings()
 
     vectordb_law = FAISS.from_documents(law_splits, embeddings)
+    vectordb_flooding_law = FAISS.from_documents(law_flooding_splits, embeddings)
+    vectordb_blakout_law = FAISS.from_documents(law_blackout_splits, embeddings)
     vectordb_manual = FAISS.from_documents(manual_splits, embeddings)
     vectordb_basic = FAISS.from_documents(basic_splits, embeddings)
     vectordb_past = FAISS.from_documents(past_splits, embeddings)
 
-    return vectordb_law, vectordb_manual, vectordb_basic, vectordb_past
+    return vectordb_law, vectordb_flooding_law, vectordb_blakout_law, vectordb_manual, vectordb_basic, vectordb_past
 

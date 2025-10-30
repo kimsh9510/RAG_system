@@ -8,6 +8,8 @@ class State(TypedDict, total=False):
     location : str
     disaster : str
     law_ctx: str
+    law_flooding_ctx : str
+    law_blackout_ctx : str
     manual_ctx: str
     basic_ctx: str
     past_ctx: str
@@ -18,6 +20,20 @@ def retrieval_law_node(vectordb_law):
         q = state["query"]
         docs = vectordb_law.similarity_search(q, k=3)
         return {"law_ctx": "\n".join(d.page_content for d in docs)}
+    return node
+
+def retrieval_flooding_law_node(vectordb_flooding_law):
+    def node(state: State):
+        q = state["query"]
+        docs = vectordb_flooding_law.similarity_search(q, k=3)
+        return {"law_flooding_ctx": "\n".join(d.page_content for d in docs)}
+    return node
+
+def retrieval_blackout_law_node(vectordb_blackout_law):
+    def node(state: State):
+        q = state["query"]
+        docs = vectordb_blackout_law.similarity_search(q, k=3)
+        return {"law_blackout_ctx": "\n".join(d.page_content for d in docs)}
     return node
 
 def retrieval_manual_node(vectordb_manual):
@@ -49,6 +65,10 @@ def llm_node(llm):
         parts = []
         if "law_ctx" in state:
             parts.append("[법]\n" + state["law_ctx"])
+        if "law_flooding_ctx" in state:
+            parts.append("[법_침수]\n" + state["law_flooding_ctx"])
+        if "law_blackout_ctx" in state:
+            parts.append("[법_정전]\n" + state["law_blackout_ctx"])
         if "manual_ctx" in state:
             parts.append("[매뉴얼]\n" + state["manual_ctx"])
         if "basic_ctx" in state:
@@ -70,10 +90,10 @@ def llm_node(llm):
                 각 재난은 왜 발생하는지(원인)와 어떤 피해로 이어지는지도 간단히 설명하세요.  
                 
                 2. [대응 시나리오]
-                위에서 탐지된 각 연계 재난 유형별로, 단계별 대응 절차를 제시하세요.
-                {state.get("manual_ctx", "")}
+                위에서 탐지된 각 연계 재난 유형별로, 단계별 대응 절차를 [법_{disaster}] 법령을 참고하여 제시하세요.
+                
                 """
-        
+        #{state.get("law_flooding_ctx", "")}
         answer = llm.invoke(prompt)
         return {"answer": answer}
     return node
