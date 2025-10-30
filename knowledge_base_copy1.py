@@ -1,5 +1,6 @@
 #벡터 DB구축 - > 지식그래프 DB로 변경 예정
 from PyPDF2 import PdfReader
+import pdfplumber
 from langchain.schema import Document
 from langchain.text_splitter import CharacterTextSplitter
 from langchain_community.vectorstores import FAISS
@@ -10,6 +11,7 @@ import os
 import zipfile #hwpx 
 import xml.etree.ElementTree as ET #hwxp
 import pandas as pd
+import re
 
 def load_all_documents_to_list(directory_path):
     all_documents = glob.glob(os.path.join(directory_path,"*"))
@@ -18,11 +20,31 @@ def load_all_documents_to_list(directory_path):
 
     for file_path in all_documents:
         try:
-            if file_path.endswith(".pdf"): #확장자 pdf로 끝나는 경우 
-                reader=PdfReader(file_path)
-                for page_num, page in enumerate(reader.pages):
-                    text = page.extract_text() or ""
-                    documents.append(Document(page_content=text, metadata={"source": file_path, "page": page_num}))
+            if os.path.isdir(file_path):#폴더는 건너뛰기
+                print(f"폴더 건너뜀: {file_path}")
+                continue
+
+            elif file_path.endswith(".pdf"): #확장자 pdf로 끝나는 경우 
+                with pdfplumber.open(file_path) as pdf:
+                    for page_num, page in enumerate(pdf.pages):
+                        #일반 텍스트 추출 
+                        text = page.extract_text() or ""
+                        
+                        #표 데이터 추출
+                        tables = page.extract_tables()
+                        table_text = ""
+                        if tables:
+                            for table in tables:
+                                # 추출된 표 데이터를 문자열로 변환-
+                                table_text += "\n\n--- TABLE START ---\n"
+                                for row in table:
+                                    table_text += " | ".join(map(str, row)) + "\n"
+                                table_text += "--- TABLE END ---\n\n"
+                        
+                        # 텍스트와 표 텍스트를 합쳐 Document 생성
+                        full_content = text + table_text
+                        documents.append(Document(page_content=full_content, metadata={"source": file_path, "page": page_num}))
+                        #print(f" 성공: PDF 파일 처리 완료 -> {file_path}, 총 {len(reader.pages)} 페이지 추출 ",flush=True)
 
             elif file_path.endswith(".docx"): #docx로 끝나는 경우
                 doc = docx.Document(file_path)
@@ -41,11 +63,20 @@ def load_all_documents_to_list(directory_path):
                                 full_text += text_element.text + "\n"
                 documents.append(Document(page_content=full_text, metadata={"source":file_path}))
 
-            elif file_path.endswith(".txt"): #txt 
-                with open(file_path,'r', encoding='utf-8') as f:
-                    full_text=f.read()
-                documents.append(Document(page_content=full_text, metadata={"source":file_path}))
-
+            elif file_path.endswith(".txt"): # 확장자가 .txt로 끝나는 경우
+                # 'r' 모드(읽기 전용), 'utf-8' 인코딩으로 파일을 엽니다.
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    raw_text = f.read() 
+                    pattern = r'^.*사진.*$\n?' 
+                    full_text = re.sub(pattern, '', raw_text, flags=re.MULTILINE)
+                documents.append(
+                    Document(
+                        page_content=full_text, 
+                        metadata={"source": os.path.basename(file_path)}
+                    )
+                )
+                #print(f" 성공: TXT 파일 처리 완료 -> {file_path}, 텍스트 길이: {len(full_text)}", flush=True)
+            
             elif file_path.endswith(".xlsx"): #excel(모바일상황실 접수 현황 검토중_240705_16시40분까지 (1).xlxs 파일만 적용)
                 """ 읽어올 데이터 
                 1. 1행 G열
@@ -103,6 +134,12 @@ def parse_multiline_cell(cell_text):
 def build_vectorstores():
     """문서 분할 + 벡터DB 생성"""
     law_docs = load_all_documents_to_list("Dataset/관련법령")
+    folder_path = "Dataset/관련법령"
+    file_names = os.listdir(folder_path)
+
+    print("관련법령 폴더 내 문서 목록:")
+    for name in file_names:
+        print("-", name)
     manual_docs = load_all_documents_to_list("Dataset/매뉴얼")
     basic_docs = load_all_documents_to_list("Dataset/기본데이터")
     past_docs = load_all_documents_to_list("Dataset/과거재난데이터")

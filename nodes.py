@@ -16,34 +16,33 @@ class State(TypedDict, total=False):
 def retrieval_law_node(vectordb_law):
     def node(state: State):
         q = state["query"]
-        docs = vectordb_law.similarity_search(q, k=2)
+        docs = vectordb_law.similarity_search(q, k=3)
         return {"law_ctx": "\n".join(d.page_content for d in docs)}
     return node
 
 def retrieval_manual_node(vectordb_manual):
     def node(state: State):
         q = state["query"]
-        docs = vectordb_manual.similarity_search(q, k=2)
+        docs = vectordb_manual.similarity_search(q, k=30)
         return {"manual_ctx": "\n".join(d.page_content for d in docs)}
     return node
 
 def retrieval_basic_node(vectordb_basic):
     def node(state: State):
         q = state["query"]
-        docs = vectordb_basic.similarity_search(q, k=2)
+        docs = vectordb_basic.similarity_search(q, k=3)
         return {"basic_ctx": "\n".join(d.page_content for d in docs)}
     return node
 
 def retrieval_past_node(vectordb_past):
     def node(state: State):
         q = state["query"]
-        docs = vectordb_past.similarity_search(q, k=2)
+        docs = vectordb_past.similarity_search(q, k=3)
         return {"past_ctx": "\n".join(d.page_content for d in docs)}
     return node
 
 def llm_node(llm):
     def node(state: State):
-        ######다시 테스트하기 반영이 안됨
         location = state.get("location") or "대한민국"
         disaster = state.get("disaster") or "재난"
 
@@ -58,7 +57,7 @@ def llm_node(llm):
             parts.append("[과거재난데이터]\n" + state["past_ctx"])
         context = "\n\n".join(parts)
 
-        ##사용자 요청: 쿼리 문이 꼭 추가되어야 하는지 확인
+        ##prompt 수정 필요
         prompt = f"""당신은 지역재난안전대책본부의 통제관입니다.
                 {location}에서 발생한 {disaster} 관련하여 재난 예측 및 대응 시나리오를 생성하려고 합니다.
 
@@ -71,7 +70,7 @@ def llm_node(llm):
                 각 재난은 왜 발생하는지(원인)와 어떤 피해로 이어지는지도 간단히 설명하세요.  
                 
                 2. [대응 시나리오]
-                위에서 탐지된 각 연계 재난 유형별로, 아래 매뉴얼 문서를 바탕으로 단계별 대응 절차를 제시하세요.
+                위에서 탐지된 각 연계 재난 유형별로, 단계별 대응 절차를 제시하세요.
                 {state.get("manual_ctx", "")}
                 """
         

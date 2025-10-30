@@ -3,15 +3,29 @@ from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.llms import HuggingFacePipeline
 from transformers import AutoModelForCausalLM, AutoTokenizer, pipeline
 from dotenv import load_dotenv
+import langchain_core
 import torch
 import os
 import subprocess
 import sys
+import importlib
+import importlib.util
 
+#for the package installation
 def ensure_installed(packages: dict):
     for pkg, version in packages.items():
         subprocess.run([sys.executable, "-m", "pip", "install", f"{pkg}=={version}"], check=True)
 
+def _ensure_packages(packages: list[str]):
+    for pkg in packages:
+        name = pkg.split("==")[0].split(">")[0]
+        if importlib.util.find_spec(name) is None:
+            try:
+                subprocess.check_call([sys.executable, "-m", "pip", "install", pkg])
+                importlib.invalidate_caches()
+            except subprocess.CalledProcessError as e:
+                raise RuntimeError(f"Failed to install {pkg}: {e}") from e
+            
 def load_embeddings():
     return HuggingFaceEmbeddings(
         model_name="sentence-transformers/all-MiniLM-L6-v2",
@@ -97,6 +111,92 @@ def load_solar_pro(model_id: str = "upstage/solar-pro-preview-instruct", max_new
     )
     return HuggingFacePipeline(pipeline=pipe)
 
+def load_solar_pro2(model_id: str = "solar-pro2", reasoning_effort: str = "minimal", max_new_tokens: int = 1024, temperature: float = 0.7):
+    _ensure_packages(["langchain-core", "langchain-upstage"]) #ensure the required packages are installed
+    
+    # lazy import to avoid hard dependency at module import time
+    from langchain_upstage import ChatUpstage
+    try:
+        # langchain_core.messages moved between releases; import guard
+        from langchain_core.messages import HumanMessage, SystemMessage
+    except Exception:
+        # fallback import path if package provides compatible names
+        try:
+            from langchain_core.schema import HumanMessage, SystemMessage
+        except Exception:
+            # create tiny stand-in dataclass for messages if import fails
+            class HumanMessage:
+                def __init__(self, content: str):
+                    self.content = content
+
+            class SystemMessage(HumanMessage):
+                pass
+            
+    load_dotenv()
+    token = os.environ.get("UPSTAGE_API_KEY") or os.environ.get("SOLAR_PRO_API_KEY") or os.environ.get("HF_HUB_TOKEN")
+    if not token:
+        raise RuntimeError("Solar Pro 2 API key not found. Please set UPSTAGE_API_KEY (or SOLAR_PRO_API_KEY) in your .env file.")
+
+    chat = ChatUpstage(api_key=token, model=model_id, reasoning_effort=reasoning_effort)
+
+    class SolarPro2Client:
+        def __init__(self, chat, max_new_tokens=max_new_tokens, temperature=temperature):
+            self.chat = chat
+            self.max_new_tokens = max_new_tokens
+            self.temperature = temperature
+
+        def invoke(self, prompt: str, *, reasoning_effort: str | None = None, response_format: dict | None = None, **kwargs):
+            messages = [HumanMessage(content=prompt)]
+            # prefer per-call reasoning_effort if provided
+            call_kwargs = {"max_tokens": self.max_new_tokens, "temperature": self.temperature}
+            if reasoning_effort is not None:
+                call_kwargs["reasoning_effort"] = reasoning_effort
+            if response_format is not None:
+                call_kwargs["response_format"] = response_format
+            call_kwargs.update(kwargs)
+
+            resp = self.chat.invoke(messages, **call_kwargs)
+
+            # attempt to normalize the response into a string (compat with existing code)
+            try:
+                if isinstance(resp, dict):
+                    # standard chat completion structure: choices[0].message.content
+                    choices = resp.get("choices") if isinstance(resp, dict) else None
+                    if choices and isinstance(choices, list) and len(choices) > 0:
+                        first = choices[0]
+                        message = first.get("message") if isinstance(first, dict) else None
+                        if isinstance(message, dict):
+                            content = message.get("content")
+                            if content is not None:
+                                return content
+                        # sometimes the library returns an assistant string directly
+                        if isinstance(first.get("message"), str):
+                            return first.get("message")
+                    # fallback: try common top-level fields
+                    if "message" in resp and isinstance(resp["message"], str):
+                        return resp["message"]
+                    # if the model returned structured data (dict), return the dict as string for compatibility
+                    return str(resp)
+                else:
+                    return str(resp)
+            except Exception:
+                return str(resp)
+
+        def with_structured_output(self, json_schema: dict):
+            structured_llm = self.chat.with_structured_output({"type": "json_schema", "json_schema": json_schema})
+
+            class StructuredWrapper:
+                def __init__(self, structured_llm):
+                    self.structured_llm = structured_llm
+
+                def invoke(self, prompt: str, **kwargs):
+                    messages = [HumanMessage(content=prompt)]
+                    resp = self.structured_llm.invoke(messages, **kwargs)
+                    return resp
+
+            return StructuredWrapper(structured_llm)
+
+    return SolarPro2Client(chat)
 
 # The llama3 model needs following pacakges:
 # pip install --upgrade transformers accelerate bitsandbytes
@@ -232,3 +332,4 @@ def load_EXAONE(model_name: str = "LGAI-EXAONE/EXAONE-4.0-32B", reasoning: bool 
             return self.tokenizer.decode(out[0], skip_special_tokens=True)
 
     return EXAONEWrapper(model, tokenizer)
+

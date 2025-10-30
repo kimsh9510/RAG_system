@@ -2,7 +2,7 @@ import sys
 import os
 from langgraph.graph import StateGraph, START, END
 from knowledge_base_copy1 import build_vectorstores
-from models import load_qwen, load_solar_pro, load_llama3, load_EXAONE
+from models import load_qwen, load_solar_pro, load_solar_pro2, load_llama3, load_EXAONE
 from nodes import State, retrieval_law_node, retrieval_manual_node, retrieval_basic_node, retrieval_past_node, llm_node, response_node
 
 #벡터 db와 LLM모델 로드
