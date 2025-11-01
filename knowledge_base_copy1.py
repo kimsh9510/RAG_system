@@ -10,6 +10,7 @@ import os
 import zipfile #hwpx 
 import xml.etree.ElementTree as ET #hwxp
 import pandas as pd
+import os
 import geopandas as gpd
 
 def load_all_documents_to_list(directory_path):
@@ -118,7 +119,14 @@ def load_geospatial_documents():
             return documents
         
         print(f"Loading geospatial data from {geojson_path}...")
-        gdf = gpd.read_file(geojson_path)
+        # Allow large GeoJSON features (remove size limit)
+        os.environ.setdefault("OGR_GEOJSON_MAX_OBJ_SIZE", "0")
+        # Try pyogrio (default) first, then fall back to fiona engine for robustness
+        try:
+            gdf = gpd.read_file(geojson_path)
+        except Exception as e1:
+            print(f"pyogrio read failed ({e1}); retrying with fiona engine...")
+            gdf = gpd.read_file(geojson_path, engine="fiona")
         
         for idx, row in gdf.iterrows():
             # Determine risk level based on population density
