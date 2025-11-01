@@ -10,6 +10,7 @@ import os
 import zipfile #hwpx 
 import xml.etree.ElementTree as ET #hwxp
 import pandas as pd
+import geopandas as gpd
 
 def load_all_documents_to_list(directory_path):
     all_documents = glob.glob(os.path.join(directory_path,"*"))
@@ -100,12 +101,114 @@ def parse_multiline_cell(cell_text):
     return data_dict
 
 
+def load_geospatial_documents():
+    """
+    Load geospatial data and convert to documents for RAG
+    Returns a list of Document objects with geographic and population information
+    """
+    documents = []
+    
+    try:
+        # Load the combined geospatial data
+        geojson_path = "Dataset/기본데이터/지역별_인구_경계_데이터.geojson"
+        
+        if not os.path.exists(geojson_path):
+            print(f"Warning: Geospatial data not found at {geojson_path}")
+            print("Please run process_geospatial_data.py first to generate the data")
+            return documents
+        
+        print(f"Loading geospatial data from {geojson_path}...")
+        gdf = gpd.read_file(geojson_path)
+        
+        for idx, row in gdf.iterrows():
+            # Determine risk level based on population density
+            density = float(row.get('population_density', 0))
+            population = float(row.get('total_population', 0))
+            
+            if density > 15000:
+                density_risk = "매우 높음"
+            elif density > 10000:
+                density_risk = "높음"
+            elif density > 5000:
+                density_risk = "중간"
+            else:
+                density_risk = "낮음"
+            
+            if population > 500000:
+                pop_risk = "대규모"
+            elif population > 100000:
+                pop_risk = "중규모"
+            elif population > 10000:
+                pop_risk = "소규모"
+            else:
+                pop_risk = "미소규모"
+            
+            # Check if elderly population is significant
+            elderly_index = float(row.get('elderly_index', 0))
+            elderly_concern = "예" if elderly_index > 100 else "아니오"
+            
+            # Create rich text description for RAG
+            content = f"""
+지역명: {row['area_name']}
+행정구역 수준: {row['administrative_level']}
+지역코드: {row['area_code']}
+총 인구: {int(population):,}명
+인구 밀도: {density:.1f}명/km²
+면적: {row['area_sqkm']:.2f}km²
+중심 좌표: (위도 {row['centroid_lat']:.4f}, 경도 {row['centroid_lon']:.4f})
+평균 연령: {row.get('average_age', 0):.1f}세
+노령화지수: {elderly_index:.1f}
+
+재난 위험도 분석:
+- 인구밀도 위험도: {density_risk}
+- 인구 규모: {pop_risk}
+- 고령인구 관리 필요: {elderly_concern}
+- 대피 소요 예상 시간: {('짧음 (저밀도)' if density < 5000 else '중간 (중밀도)' if density < 10000 else '장시간 소요 (고밀도)')}
+
+재난 대응 시 고려사항:
+{'- 고밀도 지역으로 신속한 대피가 어려울 수 있음' if density > 10000 else ''}
+{'- 대규모 인구로 인해 대량의 대피 및 구호 자원 필요' if population > 100000 else ''}
+{'- 고령 인구 비율이 높아 특별 지원 필요' if elderly_index > 100 else ''}
+"""
+            
+            documents.append(Document(
+                page_content=content.strip(),
+                metadata={
+                    "source": "지역별_인구_경계_데이터",
+                    "area_code": str(row['area_code']),
+                    "area_name": str(row['area_name']),
+                    "administrative_level": str(row['administrative_level']),
+                    "population": int(population),
+                    "density": float(density),
+                    "type": "geospatial"
+                }
+            ))
+        
+        print(f"Loaded {len(documents)} geospatial documents")
+    
+    except Exception as e:
+        print(f"Error loading geospatial data: {e}")
+        import traceback
+        traceback.print_exc()
+    
+    return documents
+
+
 def build_vectorstores():
-    """문서 분할 + 벡터DB 생성"""
+    """문서 분할 + 벡터DB 생성 (지리공간 데이터 포함)"""
     law_docs = load_all_documents_to_list("Dataset/관련법령")
     manual_docs = load_all_documents_to_list("Dataset/매뉴얼")
     basic_docs = load_all_documents_to_list("Dataset/기본데이터")
     past_docs = load_all_documents_to_list("Dataset/과거재난데이터")
+    
+    # Load geospatial documents
+    print("Loading geospatial documents...")
+    geo_docs = load_geospatial_documents()
+    
+    # Add geospatial documents to basic_docs
+    if geo_docs:
+        basic_docs.extend(geo_docs)
+        print(f"Added {len(geo_docs)} geospatial documents to basic data")
 
     #law_docs, manual_docs = load_all_documents_to_list("Dataset_for_test/과거재난데이터"), load_all_documents_to_list("Dataset_for_test/매뉴얼")
     splitter = CharacterTextSplitter(chunk_size=200, chunk_overlap=0)

@@ -21,8 +21,13 @@ faiss-cpu==1.12.0
 filelock==3.19.1
 frozenlist==1.7.0
 fsspec==2025.9.0
+geopandas
 greenlet==3.2.4
 h11==0.16.0
+openpyxl
+shapely
+fiona
+pyproj
 hf-xet==1.1.9
 httpcore==1.0.9
 httpx==0.28.1

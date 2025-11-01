@@ -8,7 +8,7 @@ from nodes import State, retrieval_law_node, retrieval_manual_node, retrieval_ba
 #벡터 db와 LLM모델 로드
 vectordb_law, vectordb_manual, vectordb_basic, vectordb_past = build_vectorstores()
 # Use the appropriate LLM loading function from models.py
-llm = load_EXAONE_api() # or load_solar_pro(), load_EXAONE(), load_llama3(), load_llm()
+llm = load_llama3() # or load_solar_pro(), load_EXAONE(), load_llama3(), load_llm()
 
 #langgraph 정의
 graph = StateGraph(State)

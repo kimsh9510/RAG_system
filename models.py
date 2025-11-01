@@ -96,7 +96,7 @@ def load_solar_pro2(model_id: str = "solar-pro2", reasoning_effort: str = "minim
     except Exception:
         # fallback import path if package provides compatible names
         try:
-            from langchain_core.schema import HumanMessage, SystemMessage
+            from langchain_core.schema import HumanMessage, SystemMessage # pyright: ignore[reportMissingImports]
         except Exception:
             # create tiny stand-in dataclass for messages if import fails
             class HumanMessage:
