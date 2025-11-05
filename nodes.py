@@ -5,7 +5,9 @@ from langchain.schema import Document
 
 class State(TypedDict, total=False):
     query: str
-    location : str
+    location_si : str
+    location_gu : str
+    location_dong : str
     disaster : str
     law_ctx: str
     law_flooding_ctx : str
@@ -59,7 +61,9 @@ def retrieval_past_node(vectordb_past):
 
 def llm_node(llm):
     def node(state: State):
-        location = state.get("location") or "대한민국"
+        location_si = state.get("location_si") or "서울시"
+        location_gu = state.get("location_gu") or "서초구"
+        location_dong = state.get("location_dong") or "서초동"
         disaster = state.get("disaster") or "재난"
 
         parts = []
@@ -79,7 +83,7 @@ def llm_node(llm):
 
         ##prompt 수정 필요
         prompt = f"""당신은 지역재난안전대책본부의 통제관입니다.
-                {location}에서 발생한 {disaster} 관련하여 재난 예측 및 대응 시나리오를 생성하려고 합니다.
+                {location_si} {location_gu} {location_dong}에서 발생한 {disaster} 관련하여 재난 예측 및 대응 시나리오를 생성하려고 합니다.
 
                 아래 문서는 법, 매뉴얼, 기본데이터, 과거재난 데이터를 통합하고 있습니다.
                 {context}
@@ -93,6 +97,7 @@ def llm_node(llm):
                 위에서 탐지된 각 연계 재난 유형별로, 단계별 대응 절차를 [법_{disaster}] 법령을 참고하여 제시하세요.
                 
                 """
+        
         #{state.get("law_flooding_ctx", "")}
         answer = llm.invoke(prompt)
         return {"answer": answer}
