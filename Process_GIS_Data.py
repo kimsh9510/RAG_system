@@ -1,17 +1,9 @@
-"""
-Process geospatial boundary and population data for RAG integration
-Combines shapefiles with population statistics to create searchable documents
-"""
 import geopandas as gpd
 import pandas as pd
 import os
 from pathlib import Path
 
 def combine_boundary_population_data():
-    """
-    Combine shapefile boundary data with population statistics
-    Returns a comprehensive DataFrame with geometry and demographics
-    """
     
     base_path = "Dataset/경계/경계/통계청_SGIS 행정구역 통계 및 경계_20240630"
     
