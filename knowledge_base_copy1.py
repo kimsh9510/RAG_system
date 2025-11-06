@@ -1,5 +1,6 @@
 #벡터 DB구축 - > 지식그래프 DB로 변경 예정
 from PyPDF2 import PdfReader
+import pdfplumber
 from langchain.schema import Document
 from langchain.text_splitter import CharacterTextSplitter
 from langchain_community.vectorstores import FAISS
@@ -12,6 +13,7 @@ import xml.etree.ElementTree as ET #hwxp
 import pandas as pd
 import os
 import geopandas as gpd
+import re
 
 def load_all_documents_to_list(directory_path):
     all_documents = glob.glob(os.path.join(directory_path,"*"))
@@ -20,11 +22,34 @@ def load_all_documents_to_list(directory_path):
 
     for file_path in all_documents:
         try:
+            # skip directories (new behavior)
+            if os.path.isdir(file_path):
+                print(f"폴더 건너뜀: {file_path}")
+                continue
+
             if file_path.endswith(".pdf"): #확장자 pdf로 끝나는 경우 
-                reader=PdfReader(file_path)
-                for page_num, page in enumerate(reader.pages):
-                    text = page.extract_text() or ""
-                    documents.append(Document(page_content=text, metadata={"source": file_path, "page": page_num}))
+                # prefer pdfplumber for better text + table extraction; fallback to PyPDF2
+                try:
+                    with pdfplumber.open(file_path) as pdf:
+                        for page_num, page in enumerate(pdf.pages):
+                            text = page.extract_text() or ""
+                            # extract tables as text as well
+                            tables = page.extract_tables()
+                            table_text = ""
+                            if tables:
+                                for table in tables:
+                                    table_text += "\n\n--- TABLE START ---\n"
+                                    for row in table:
+                                        table_text += " | ".join(map(str, row)) + "\n"
+                                    table_text += "--- TABLE END ---\n\n"
+                            full_content = text + table_text
+                            documents.append(Document(page_content=full_content, metadata={"source": file_path, "page": page_num}))
+                except Exception:
+                    # fallback
+                    reader=PdfReader(file_path)
+                    for page_num, page in enumerate(reader.pages):
+                        text = page.extract_text() or ""
+                        documents.append(Document(page_content=text, metadata={"source": file_path, "page": page_num}))
 
             elif file_path.endswith(".docx"): #docx로 끝나는 경우
                 doc = docx.Document(file_path)
@@ -43,12 +68,19 @@ def load_all_documents_to_list(directory_path):
                                 full_text += text_element.text + "\n"
                 documents.append(Document(page_content=full_text, metadata={"source":file_path}))
 
-            elif file_path.endswith(".txt"): #txt 
-                with open(file_path,'r', encoding='utf-8') as f:
-                    full_text=f.read()
-                documents.append(Document(page_content=full_text, metadata={"source":file_path}))
-
-            elif file_path.endswith(".xlsx"): #excel(모바일상황실 접수 현황 검토중_240705_16시40분까지 (1).xlxs 파일만 적용)
+            elif file_path.endswith(".txt"): # 확장자가 .txt로 끝나는 경우
+                # 'r' 모드(읽기 전용), 'utf-8' 인코딩으로 파일을 엽니다.
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    raw_text = f.read() 
+                    # remove lines that contain the word 사진 (photos), they are noisy in some datasets
+                    pattern = r'^.*사진.*$\n?'
+                    full_text = re.sub(pattern, '', raw_text, flags=re.MULTILINE)
+                documents.append(
+                    Document(
+                        page_content=full_text, 
+                        metadata={"source": os.path.basename(file_path)}
+                    )
+                )
                 """ 읽어올 데이터 
                 1. 1행 G열
                 2. 2행~끝까지 F(유형),G(세부사항),H(주소),O(최종소요시간),V(첫 조치 소요시간) 행 
@@ -203,34 +235,49 @@ def load_geospatial_documents():
 
 
 def build_vectorstores():
-    """문서 분할 + 벡터DB 생성 (지리공간 데이터 포함)"""
+    """문서 분할 + 벡터DB 생성 (지리공간 데이터 포함)
+
+    Adds support for separate law subsets (침수 / 정전) if those folders exist.
+    Returns: vectordb_law, vectordb_flooding_law, vectordb_blackout_law, vectordb_manual, vectordb_basic, vectordb_past
+    """
     law_docs = load_all_documents_to_list("Dataset/관련법령")
+    # try to load specific law subfolders if present
+    law_flooding_docs = []
+    law_blackout_docs = []
+    flooding_dir = "Dataset/관련법령/법령_풍수해"
+    blackout_dir = "Dataset/관련법령/법령_정전"
+    if os.path.exists(flooding_dir):
+        law_flooding_docs = load_all_documents_to_list(flooding_dir)
+    if os.path.exists(blackout_dir):
+        law_blackout_docs = load_all_documents_to_list(blackout_dir)
+
     manual_docs = load_all_documents_to_list("Dataset/매뉴얼")
     basic_docs = load_all_documents_to_list("Dataset/기본데이터")
     past_docs = load_all_documents_to_list("Dataset/과거재난데이터")
-    
-    # Load geospatial documents
+
+    # Load geospatial documents and append to basic data (unchanged behavior)
     print("Loading geospatial documents...")
     geo_docs = load_geospatial_documents()
-    
-    # Add geospatial documents to basic_docs
     if geo_docs:
         basic_docs.extend(geo_docs)
         print(f"Added {len(geo_docs)} geospatial documents to basic data")
 
-    #law_docs, manual_docs = load_all_documents_to_list("Dataset_for_test/과거재난데이터"), load_all_documents_to_list("Dataset_for_test/매뉴얼")
     splitter = CharacterTextSplitter(chunk_size=200, chunk_overlap=0)
 
     law_splits = splitter.split_documents(law_docs)
+    law_flooding_splits = splitter.split_documents(law_flooding_docs) if law_flooding_docs else []
+    law_blackout_splits = splitter.split_documents(law_blackout_docs) if law_blackout_docs else []
     manual_splits = splitter.split_documents(manual_docs)
     basic_splits = splitter.split_documents(basic_docs)
     past_splits = splitter.split_documents(past_docs)
 
     embeddings = load_embeddings()
 
-    vectordb_law = FAISS.from_documents(law_splits, embeddings)
+    vectordb_law = FAISS.from_documents(law_splits, embeddings) if law_splits else None
+    vectordb_flooding_law = FAISS.from_documents(law_flooding_splits, embeddings) if law_flooding_splits else None
+    vectordb_blackout_law = FAISS.from_documents(law_blackout_splits, embeddings) if law_blackout_splits else None
     vectordb_manual = FAISS.from_documents(manual_splits, embeddings)
     vectordb_basic = FAISS.from_documents(basic_splits, embeddings)
     vectordb_past = FAISS.from_documents(past_splits, embeddings)
 
-    return vectordb_law, vectordb_manual, vectordb_basic, vectordb_past
+    return vectordb_law, vectordb_flooding_law, vectordb_blackout_law, vectordb_manual, vectordb_basic, vectordb_past
