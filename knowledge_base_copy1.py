@@ -1,6 +1,8 @@
 #벡터 DB구축 - > 지식그래프 DB로 변경 예정
 from PyPDF2 import PdfReader
 import pdfplumber
+import logging
+import warnings
 from langchain.schema import Document
 from langchain.text_splitter import CharacterTextSplitter
 from langchain_community.vectorstores import FAISS
@@ -8,12 +10,14 @@ from models import load_embeddings
 import glob
 import docx # python-docx
 import os
-import zipfile #hwpx 
-import xml.etree.ElementTree as ET #hwxp
+import zipfile #hwpx
+import xml.etree.ElementTree as ET #hwpx
 import pandas as pd
 import os
 import geopandas as gpd
 import re
+import logging
+import warnings
 
 def load_all_documents_to_list(directory_path):
     all_documents = glob.glob(os.path.join(directory_path,"*"))
@@ -29,6 +33,11 @@ def load_all_documents_to_list(directory_path):
 
             if file_path.endswith(".pdf"): #확장자 pdf로 끝나는 경우 
                 # prefer pdfplumber for better text + table extraction; fallback to PyPDF2
+                # reduce noisy decompression / pdfminer logs which often flood console for damaged PDFs
+                logging.getLogger("pdfminer").setLevel(logging.ERROR)
+                logging.getLogger("pdfplumber").setLevel(logging.ERROR)
+                warnings.filterwarnings("ignore", category=UserWarning, module=r"pdfplumber")
+
                 try:
                     with pdfplumber.open(file_path) as pdf:
                         for page_num, page in enumerate(pdf.pages):
@@ -43,17 +52,21 @@ def load_all_documents_to_list(directory_path):
                                         table_text += " | ".join(map(str, row)) + "\n"
                                     table_text += "--- TABLE END ---\n\n"
                             full_content = text + table_text
+                            # normalize and split very long runs to avoid oversized chunks later
+                            full_content = _normalize_and_break_long_tokens(full_content)
                             documents.append(Document(page_content=full_content, metadata={"source": file_path, "page": page_num}))
                 except Exception:
                     # fallback
                     reader=PdfReader(file_path)
                     for page_num, page in enumerate(reader.pages):
                         text = page.extract_text() or ""
+                        text = _normalize_and_break_long_tokens(text)
                         documents.append(Document(page_content=text, metadata={"source": file_path, "page": page_num}))
 
             elif file_path.endswith(".docx"): #docx로 끝나는 경우
                 doc = docx.Document(file_path)
                 full_text = "\n".join([para.text for para in doc.paragraphs])
+                full_text = _normalize_and_break_long_tokens(full_text)
                 documents.append(Document(page_content=full_text,metadata={"source": file_path}))
 
             elif file_path.endswith(".hwpx"):
@@ -66,15 +79,17 @@ def load_all_documents_to_list(directory_path):
                         for text_element in root.iter('{http://www.hancom.co.kr/hwpml/2011/paragraph}t'):
                             if text_element.text:
                                 full_text += text_element.text + "\n"
+                full_text = _normalize_and_break_long_tokens(full_text)
                 documents.append(Document(page_content=full_text, metadata={"source":file_path}))
 
             elif file_path.endswith(".txt"): # 확장자가 .txt로 끝나는 경우
                 # 'r' 모드(읽기 전용), 'utf-8' 인코딩으로 파일을 엽니다.
-                with open(file_path, 'r', encoding='utf-8') as f:
+                with open(file_path, 'r', encoding='utf-8', errors='ignore') as f:
                     raw_text = f.read() 
                     # remove lines that contain the word 사진 (photos), they are noisy in some datasets
                     pattern = r'^.*사진.*$\n?'
                     full_text = re.sub(pattern, '', raw_text, flags=re.MULTILINE)
+                    full_text = _normalize_and_break_long_tokens(full_text)
                 documents.append(
                     Document(
                         page_content=full_text, 
@@ -112,8 +127,36 @@ def load_all_documents_to_list(directory_path):
         except Exception as e:
             # 해당 파일은 건너뛰고 오류 메시지를 출력
             print(f"Error processing {file_path}: {e}")
-    print(documents)
+    # don't print large documents list in normal runs; keep a short summary
+    print(f"Loaded {len(documents)} raw documents from {directory_path}")
     return documents
+
+
+def _normalize_and_break_long_tokens(text: str, max_run: int = 400, break_size: int = 200) -> str:
+    """Normalize whitespace and break extremely long non-space runs which cause the
+    CharacterTextSplitter to emit warnings like 'Created a chunk of size X, which is longer than the specified Y'.
+
+    - max_run: consider runs of non-whitespace longer than this as 'too long'
+    - break_size: break those runs into pieces of length break_size separated by spaces
+    """
+    if not isinstance(text, str) or not text:
+        return text
+
+    # normalize whitespace (collapse many newlines/spaces to single spaces, but keep newlines for splitting)
+    # preserve table markers/newlines: replace multiple spaces but keep line breaks
+    # first, replace Windows line endings
+    t = text.replace('\r\n', '\n').replace('\r', '\n')
+    # collapse repeated spaces/tabs but keep single newlines
+    t = re.sub(r"[ \t]+", " ", t)
+
+    # break extremely long continuous non-space sequences (e.g., corrupted pdf streams, long table rows)
+    def _breaker(m):
+        s = m.group(0)
+        parts = [s[i:i+break_size] for i in range(0, len(s), break_size)]
+        return " ".join(parts)
+
+    t = re.sub(rf"\S{{{max_run},}}", _breaker, t)
+    return t
 
 def parse_multiline_cell(cell_text):
     """
