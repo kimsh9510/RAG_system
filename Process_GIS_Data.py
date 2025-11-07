@@ -179,11 +179,11 @@ def combine_boundary_population_data():
     output_dir = "Dataset/기본데이터"
     os.makedirs(output_dir, exist_ok=True)
     
-    # Save to Excel (without geometry column)
-    excel_df = result_gdf.drop('geometry', axis=1)
-    excel_path = f"{output_dir}/지역별_인구_경계_데이터.xlsx"
-    excel_df.to_excel(excel_path, index=False, engine='openpyxl')
-    print(f"Saved Excel file to: {excel_path}")
+    # Save to CSV (without geometry column)
+    csv_df = result_gdf.drop('geometry', axis=1)
+    csv_path = f"{output_dir}/지역별_인구_경계_데이터.csv"
+    csv_df.to_csv(csv_path, index=False, encoding='utf-8-sig')
+    print(f"Saved CSV file to: {csv_path}")
     
     # Save as GeoJSON for spatial queries
     geojson_path = f"{output_dir}/지역별_인구_경계_데이터.geojson"
