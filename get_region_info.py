@@ -18,7 +18,7 @@ except Exception:
     pd = None
 
 
-_DEFAULT_CSV = Path(__file__).resolve().parents[0] / "Dataset" / "기본데이터" / "지역별_인구_경계_데이터.csv"
+_DEFAULT_CSV = Path(__file__).resolve().parents[0] / "Location_Data" / "combined_locations.csv"
 
 
 def _find_col(df, candidates):
@@ -224,7 +224,7 @@ if __name__ == "__main__":
     import argparse
 
     parser = argparse.ArgumentParser(description="Get region info summary from CSV")
-    parser.add_argument("sido", nargs="?", default="서울시", help="시도 (e.g., 서울시)")
+    parser.add_argument("sido", nargs="?", default="서울특별시", help="시도 (e.g., 서울특별시)")
     parser.add_argument("sigungu", nargs="?", default="서초구", help="시군구 (e.g., 서초구)")
     parser.add_argument("dong", nargs="?", default="서초동", help="동 (e.g., 서초동)")
     parser.add_argument("--csv", dest="csv", default=str(_DEFAULT_CSV), help="path to CSV file")
