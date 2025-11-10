@@ -19,6 +19,8 @@ import sys
 import re
 import logging
 import warnings
+from datetime import datetime
+from pathlib import Path
 
 def load_all_documents_to_list(directory_path):
     all_documents = glob.glob(os.path.join(directory_path,"*"))
@@ -186,12 +188,21 @@ def load_geospatial_documents():
     documents = []
     
     try:
-        location_si = os.environ.get("LOCATION_SI")
-        location_gu = os.environ.get("LOCATION_GU")
-        location_dong = os.environ.get("LOCATION_DONG")
-        disaster = os.environ.get("DISASTER")
+        # Read query context from the running main module (__main__) first, then env vars, then defaults
+        main_mod = sys.modules.get("__main__")
+        main_si = getattr(main_mod, "location_si", None) if main_mod else None
+        main_gu = getattr(main_mod, "location_gu", None) if main_mod else None
+        main_dong = getattr(main_mod, "location_dong", None) if main_mod else None
+        main_disaster = getattr(main_mod, "disaster", None) if main_mod else None
 
-        print(f"Geospatial query context -> 재난: {disaster}, 행정: {location_si} {location_gu} {location_dong}")
+        location_si = main_si or os.environ.get("LOCATION_SI") or "서울시"
+        location_gu = main_gu or os.environ.get("LOCATION_GU") or "서초구"
+        location_dong = main_dong or os.environ.get("LOCATION_DONG") or "서초동"
+        disaster = main_disaster or os.environ.get("DISASTER") or "재난"
+
+        # We'll collect output into a buffer and write to a timestamped file instead of printing
+        out_lines = []
+        out_lines.append(f"Query context -> 재난: {disaster}, 행정: {location_si} {location_gu} {location_dong}")
 
         # Load the combined geospatial data
         geojson_path = "Dataset/기본데이터/지역별_인구_경계_데이터.geojson"
@@ -201,7 +212,7 @@ def load_geospatial_documents():
             print("Please run process_geospatial_data.py first to generate the data")
             return documents
 
-        print(f"Loading geospatial data from {geojson_path}...")
+        # Load the geojson silently; status will be written to the output file
         # Allow large GeoJSON features (remove size limit)
         os.environ.setdefault("OGR_GEOJSON_MAX_OBJ_SIZE", "0")
         # Try pyogrio (default) first, then fall back to fiona engine for robustness
@@ -236,10 +247,17 @@ def load_geospatial_documents():
         gdf_matches = gdf[mask]
 
         match_count = len(gdf_matches)
-        print(f"Found {match_count} geospatial row(s) matching the query location.")
+        out_lines.append(f"Found {match_count} geospatial row(s) matching the query location.")
 
         if match_count == 0:
-            print("No geospatial rows matched the provided location. Returning empty geospatial document list.")
+            # write a short file noting zero matches and return
+            out_dir = Path("outputs") / "geospatial_queries"
+            out_dir.mkdir(parents=True, exist_ok=True)
+            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+            safe_name = re.sub(r"\s+", "_", f"{location_si}_{location_gu}_{location_dong}_{disaster}")
+            out_path = out_dir / f"{ts}_{safe_name}_no_matches.txt"
+            out_lines.append("No geospatial rows matched the provided location.")
+            out_path.write_text("\n".join(out_lines), encoding="utf-8")
             return documents
 
         # For each matched row, create Document and print a short summary
@@ -297,13 +315,13 @@ def load_geospatial_documents():
 {('- 고령 인구 비율이 높아 특별 지원 필요' if elderly_index > 100 else '')}
 """
 
-            # print a short summary to the console for user visibility
-            print("="*60)
-            print(f"Matched area: {row.get('area_name', '')} ({row.get('administrative_level', '')}), code: {row.get('area_code', '')}")
-            print(f"인구: {int(population):,}명 | 밀도: {density:.1f}명/km² | 노령화지수: {elderly_index:.1f}")
-            print("문서 콘텐츠 (요약):")
-            print(content.strip()[:1000])  # print up to first 1000 chars to avoid flooding
-            print("="*60)
+            # append the summary/content to the output buffer instead of printing
+            out_lines.append("="*60)
+            out_lines.append(f"Matched area: {row.get('area_name', '')} ({row.get('administrative_level', '')}), code: {row.get('area_code', '')}")
+            out_lines.append(f"인구: {int(population):,}명 | 밀도: {density:.1f}명/km² | 노령화지수: {elderly_index:.1f}")
+            out_lines.append("문서 콘텐츠 (요약):")
+            out_lines.append(content.strip())
+            out_lines.append("="*60)
 
             documents.append(Document(
                 page_content=content.strip(),
@@ -318,7 +336,15 @@ def load_geospatial_documents():
                 }
             ))
         
-        print(f"Loaded {len(documents)} geospatial documents (filtered by query)")
+        out_lines.append(f"Loaded {len(documents)} geospatial documents (filtered by query)")
+
+        # write the collected output to a timestamped file for later review
+        out_dir = Path("outputs") / "geospatial_queries"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        safe_name = re.sub(r"\s+", "_", f"{location_si}_{location_gu}_{location_dong}_{disaster}")
+        out_path = out_dir / f"{ts}_{safe_name}.txt"
+        out_path.write_text("\n".join(out_lines), encoding="utf-8")
     
     except Exception as e:
         print(f"Error loading geospatial data: {e}")

@@ -1,3 +1,4 @@
+# Code: Reads .shp file and then exports attribute table to CSV.
 import os
 import geopandas as gpd
 import matplotlib.pyplot as plt
