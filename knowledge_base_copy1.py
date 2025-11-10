@@ -15,6 +15,7 @@ import xml.etree.ElementTree as ET #hwpx
 import pandas as pd
 import os
 import geopandas as gpd
+import sys
 import re
 import logging
 import warnings
@@ -185,14 +186,21 @@ def load_geospatial_documents():
     documents = []
     
     try:
+        location_si = os.environ.get("LOCATION_SI")
+        location_gu = os.environ.get("LOCATION_GU")
+        location_dong = os.environ.get("LOCATION_DONG")
+        disaster = os.environ.get("DISASTER")
+
+        print(f"Geospatial query context -> 재난: {disaster}, 행정: {location_si} {location_gu} {location_dong}")
+
         # Load the combined geospatial data
         geojson_path = "Dataset/기본데이터/지역별_인구_경계_데이터.geojson"
-        
+
         if not os.path.exists(geojson_path):
             print(f"Warning: Geospatial data not found at {geojson_path}")
             print("Please run process_geospatial_data.py first to generate the data")
             return documents
-        
+
         print(f"Loading geospatial data from {geojson_path}...")
         # Allow large GeoJSON features (remove size limit)
         os.environ.setdefault("OGR_GEOJSON_MAX_OBJ_SIZE", "0")
@@ -202,12 +210,50 @@ def load_geospatial_documents():
         except Exception as e1:
             print(f"pyogrio read failed ({e1}); retrying with fiona engine...")
             gdf = gpd.read_file(geojson_path, engine="fiona")
-        
+
+        # Prepare location parts and normalize
+        parts = [p for p in (location_si, location_gu, location_dong) if p]
+        parts_norm = [p.strip().lower() for p in parts]
+
+        # Choose candidate fields to search for location strings
+        candidate_fields = ['area_name', 'administrative_level', 'area_code']
+        search_fields = [f for f in candidate_fields if f in gdf.columns]
+        if not search_fields:
+            search_fields = list(gdf.columns)
+
+        def _norm_val(v):
+            try:
+                return str(v).lower()
+            except Exception:
+                return ""
+
+        # Filter rows where every location part appears somewhere in the searchable text
+        mask = []
         for idx, row in gdf.iterrows():
-            # Determine risk level based on population density
-            density = float(row.get('population_density', 0))
-            population = float(row.get('total_population', 0))
-            
+            row_text = " ".join([_norm_val(row.get(f, "")) for f in search_fields])
+            matched = all(p in row_text for p in parts_norm)
+            mask.append(matched)
+        gdf_matches = gdf[mask]
+
+        match_count = len(gdf_matches)
+        print(f"Found {match_count} geospatial row(s) matching the query location.")
+
+        if match_count == 0:
+            print("No geospatial rows matched the provided location. Returning empty geospatial document list.")
+            return documents
+
+        # For each matched row, create Document and print a short summary
+        for idx, row in gdf_matches.iterrows():
+            density = float(row.get('population_density', 0) or 0)
+            population = float(row.get('total_population', 0) or 0)
+            elderly_index = float(row.get('elderly_index', 0) or 0)
+            area_name = _norm_val(row.get('area_name', ''))
+            administrative_level = _norm_val(row.get('administrative_level', ''))
+            area_code = _norm_val(row.get('area_code', ''))
+            area_sqkm = float(row.get('area_sqkm', 0) or 0)
+            centroid_lat = float(row.get('centroid_lat', 0) or 0)
+            centroid_lon = float(row.get('centroid_lon', 0) or 0)
+
             if density > 15000:
                 density_risk = "매우 높음"
             elif density > 10000:
@@ -226,19 +272,16 @@ def load_geospatial_documents():
             else:
                 pop_risk = "미소규모"
             
-            # Check if elderly population is significant
-            elderly_index = float(row.get('elderly_index', 0))
             elderly_concern = "예" if elderly_index > 100 else "아니오"
-            
-            # Create rich text description for RAG
+
             content = f"""
-지역명: {row['area_name']}
-행정구역 수준: {row['administrative_level']}
-지역코드: {row['area_code']}
+지역명: {row.get('area_name', '')}
+행정구역 수준: {row.get('administrative_level', '')}
+지역코드: {row.get('area_code', '')}
 총 인구: {int(population):,}명
 인구 밀도: {density:.1f}명/km²
-면적: {row['area_sqkm']:.2f}km²
-중심 좌표: (위도 {row['centroid_lat']:.4f}, 경도 {row['centroid_lon']:.4f})
+면적: {area_sqkm:.2f}km²
+중심 좌표: (위도 {centroid_lat:.4f}, 경도 {centroid_lon:.4f})
 평균 연령: {row.get('average_age', 0):.1f}세
 노령화지수: {elderly_index:.1f}
 
@@ -249,25 +292,33 @@ def load_geospatial_documents():
 - 대피 소요 예상 시간: {('짧음 (저밀도)' if density < 5000 else '중간 (중밀도)' if density < 10000 else '장시간 소요 (고밀도)')}
 
 재난 대응 시 고려사항:
-{'- 고밀도 지역으로 신속한 대피가 어려울 수 있음' if density > 10000 else ''}
-{'- 대규모 인구로 인해 대량의 대피 및 구호 자원 필요' if population > 100000 else ''}
-{'- 고령 인구 비율이 높아 특별 지원 필요' if elderly_index > 100 else ''}
+{('- 고밀도 지역으로 신속한 대피가 어려울 수 있음' if density > 10000 else '')}
+{('- 대규모 인구로 인해 대량의 대피 및 구호 자원 필요' if population > 100000 else '')}
+{('- 고령 인구 비율이 높아 특별 지원 필요' if elderly_index > 100 else '')}
 """
-            
+
+            # print a short summary to the console for user visibility
+            print("="*60)
+            print(f"Matched area: {row.get('area_name', '')} ({row.get('administrative_level', '')}), code: {row.get('area_code', '')}")
+            print(f"인구: {int(population):,}명 | 밀도: {density:.1f}명/km² | 노령화지수: {elderly_index:.1f}")
+            print("문서 콘텐츠 (요약):")
+            print(content.strip()[:1000])  # print up to first 1000 chars to avoid flooding
+            print("="*60)
+
             documents.append(Document(
                 page_content=content.strip(),
                 metadata={
                     "source": "지역별_인구_경계_데이터",
-                    "area_code": str(row['area_code']),
-                    "area_name": str(row['area_name']),
-                    "administrative_level": str(row['administrative_level']),
+                    "area_code": str(row.get('area_code', '')),
+                    "area_name": str(row.get('area_name', '')),
+                    "administrative_level": str(row.get('administrative_level', '')),
                     "population": int(population),
                     "density": float(density),
                     "type": "geospatial"
                 }
             ))
         
-        print(f"Loaded {len(documents)} geospatial documents")
+        print(f"Loaded {len(documents)} geospatial documents (filtered by query)")
     
     except Exception as e:
         print(f"Error loading geospatial data: {e}")

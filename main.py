@@ -1,5 +1,13 @@
 import sys
 import os
+# Query context variables (Option A): define these BEFORE importing build_vectorstores
+# so the geospatial loader can read them from the running main module (__main__).
+# Modify these values here as needed for your query.
+location_si = "서울시"
+location_gu = "서초구"
+location_dong = "서초동"
+disaster = "침수"
+
 from langgraph.graph import StateGraph, START, END
 from knowledge_base_copy1 import build_vectorstores
 from models import load_llm, load_solar_pro, load_EXAONE, load_llama3, load_solar_pro2, load_EXAONE_api
