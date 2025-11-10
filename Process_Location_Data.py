@@ -256,7 +256,7 @@ class CombineLocation:
 
 def main() -> int:
     # create output folder for generated files
-    out_dir = "Location_Data"
+    out_dir = "Location_Population_Data"
     os.makedirs(out_dir, exist_ok=True)
 
     # 1) Ensure CSVs for all three administrative levels exist in out_dir. If missing, try to find

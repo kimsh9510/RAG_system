@@ -1,32 +1,11 @@
-﻿"""Combine location metadata with statistical population CSVs.
-
-Reads a location file (Location_Data/combined_locations.csv by default)
-and one or more statistical CSVs (directory or single file) that contain
-columns similar to: 기준년도, 행정구역코드, 통계항목, 통계값.
-
-The script pivots the statistical data (통계항목 -> columns) and merges
-on the administrative code (행정구역코드 == area_code). The result is
-written as CSV to the specified output path.
-
-Usage:
-  python combine_Location_Popul.py \
-    --locations Location_Data/combined_locations.csv \
-    --stats Dataset/경계/경계/통계청_SGIS\ 행정구역\ 통계\ 및\ 경계_20240630/1. 통계/1. 2023년 행정구역 통계(인구) \
-    --out Location_Data/combined_locations_population.csv
-
-If --stats points to a directory, all .csv files found there will be read
-and concatenated (useful because the SGIS folder contains many CSVs).
+﻿"""
+Combine location metadata with statistical population CSVs.
 """
 from pathlib import Path
 import argparse
 import sys
 from typing import Optional, List, Any
-
-try:
-    import pandas as pd
-except Exception:
-    pd = None
-
+import pandas as pd
 
 def _read_csv_with_encodings(path: Path, **kwargs):
     """Try reading CSV with several encodings and return the dataframe and used encoding.
@@ -150,6 +129,86 @@ def main(locations_csv: Path, stats_path: Path, out_csv: Path):
     except Exception as e:
         raise RuntimeError(f"Failed to read locations CSV {locations_csv}: {e}")
 
+    # 3) Run population processing script to produce combined_population.csv
+    print('\n--- Running population data processing (Process_Population_Data.py)')
+    # location where both final CSVs are expected
+    out_dir = Path(__file__).resolve().parents[0] / 'Location_Population_Data'
+    try:
+        # import and call the main function from Process_Population_Data if available
+        try:
+            import Process_Population_Data as popproc
+        except Exception:
+            popproc = None
+
+        if popproc and hasattr(popproc, 'main'):
+            stats_dir = Path(__file__).resolve().parents[0] / 'Dataset' / '경계' / '경계' / '통계청_SGIS 행정구역 통계 및 경계_20240630' / '1. 통계' / '1. 2023년 행정구역 통계(인구)'
+            out_pop = Path(out_dir) / 'combined_population.csv'
+            try:
+                popproc.main(stats_dir, out_pop)
+            except Exception as e:
+                print(f"Population processing script returned an error: {e}")
+        else:
+            print("Process_Population_Data module not importable or missing 'main'; skipping population processing.")
+    except Exception as e:
+        print(f"Failed to run population processing: {e}")
+
+    # 4) Merge combined_locations.csv and combined_population.csv on area_code
+    print('\n--- Merging combined_locations.csv and combined_population.csv')
+    try:
+        # ensure pandas is available (module-level import at top should have set pd)
+        if pd is None:
+            raise RuntimeError('pandas is required to merge CSVs; please install pandas')
+
+        loc_path = Path(out_dir) / 'combined_locations.csv'
+        pop_path = Path(out_dir) / 'combined_population.csv'
+
+        if not loc_path.exists():
+            raise FileNotFoundError(f"Locations CSV not found: {loc_path}")
+        if not pop_path.exists():
+            raise FileNotFoundError(f"Population CSV not found: {pop_path}")
+
+        # helper: try multiple encodings when reading
+        def _read_with_encodings(p: Path):
+            encs = ['utf-8-sig', 'utf-8', 'cp949', 'euc-kr', 'latin1']
+            last = None
+            for e in encs:
+                try:
+                    return pd.read_csv(p, encoding=e, dtype=str)
+                except Exception as ex:
+                    last = ex
+                    continue
+            raise last
+
+        loc_df = _read_with_encodings(loc_path)
+        pop_df = _read_with_encodings(pop_path)
+
+        # ensure area_code column exists in both; try common alternatives
+        def find_area_col(df):
+            for c in df.columns:
+                if str(c).strip().lower() in ('area_code', '지역코드', 'adm_cd', 'adm_cd'):
+                    return c
+            # try contains
+            for c in df.columns:
+                if 'area' in str(c).lower() or '지역' in str(c) or 'adm' in str(c).lower():
+                    return c
+            return None
+
+        loc_area = find_area_col(loc_df)
+        pop_area = find_area_col(pop_df)
+        if loc_area is None or pop_area is None:
+            raise ValueError(f"Could not find area_code column in one of the files (found: {loc_area}, {pop_area})")
+
+        # normalize column name
+        loc_df['area_code'] = loc_df[loc_area].astype(str).str.strip()
+        pop_df['area_code'] = pop_df[pop_area].astype(str).str.strip()
+
+        merged_df = loc_df.merge(pop_df, how='left', on='area_code')
+        merged_out = Path(out_dir) / 'combined_locations_population.csv'
+        merged_df.to_csv(merged_out, index=False, encoding='utf-8-sig')
+        print(f"Wrote merged dataset to: {merged_out}")
+    except Exception as e:
+        print(f"Error during merge: {e}")
+
     # canonical area code column in locations
     area_col = None
     for cand in ["area_code", "area_code", "area_code", "area_code", "area_code", "area_code", "area_code", "area_code", 'area_code']:
@@ -181,9 +240,9 @@ def main(locations_csv: Path, stats_path: Path, out_csv: Path):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Combine location metadata with population/statistics CSVs')
-    parser.add_argument('--locations', type=str, default=str(Path(__file__).resolve().parents[0] / 'Location_Data' / 'combined_locations.csv'), help='Path to locations CSV (default: Location_Data/combined_locations.csv)')
+    parser.add_argument('--locations', type=str, default=str(Path(__file__).resolve().parents[0] / 'Location_Population_Data' / 'combined_locations.csv'), help='Path to locations CSV (default: Location_Population_Data/combined_locations.csv)')
     parser.add_argument('--stats', type=str, default=str(Path(__file__).resolve().parents[0] / 'Dataset' / '경계' / '경계' / '통계청_SGIS 행정구역 통계 및 경계_20240630' / '1. 통계' / '1. 2023년 행정구역 통계(인구)'), help='Path to stats CSV or directory containing CSVs')
-    parser.add_argument('--out', type=str, default=str(Path(__file__).resolve().parents[0] / 'Location_Data' / 'combined_locations_population.csv'), help='Output CSV path')
+    parser.add_argument('--out', type=str, default=str(Path(__file__).resolve().parents[0] / 'Location_Population_Data' / 'combined_locations_population.csv'), help='Output CSV path')
     args = parser.parse_args()
 
     try:

@@ -177,7 +177,7 @@ def main(stats_dir: Path, out_csv: Path):
 if __name__ == '__main__':
     p = argparse.ArgumentParser(description='Combine SGIS population CSVs into a single file keyed by 행정구역코드')
     default_stats = Path(__file__).resolve().parents[0] / 'Dataset' / '경계' / '경계' / '통계청_SGIS 행정구역 통계 및 경계_20240630' / '1. 통계' / '1. 2023년 행정구역 통계(인구)'
-    default_out = Path(__file__).resolve().parents[0] / 'Location_Data' / 'population_combined.csv'
+    default_out = Path(__file__).resolve().parents[0] / 'Location_Population_Data' / 'combined_population.csv'
     p.add_argument('--stats-dir', type=str, default=str(default_stats), help='Directory containing population CSVs')
     p.add_argument('--out', type=str, default=str(default_out), help='Output CSV path')
     args = p.parse_args()
