@@ -1,322 +1,263 @@
-import geopandas as gpd
-import pandas as pd
-import os
+import subprocess
+import sys
 from pathlib import Path
-from Read_GIS_File import read_shapefile
+import pandas as pd
+import geopandas as gpd
 
-def combine_boundary_population_data():
-    
-    base_path = "Dataset/경계/경계/통계청_SGIS 행정구역 통계 및 경계_20240630"
-    
-    # Load boundary shapefiles using Read_GIS_File.read_shapefile so we get the same read logic
-    print("Loading boundary shapefiles via Read_GIS_File.read_shapefile...")
-    sido_path = f"{base_path}/2. 경계/1. 2024년 2분기 기준 시도 경계/bnd_sido_00_2024_2Q.shp"
-    sigungu_path = f"{base_path}/2. 경계/2. 2024년 2분기 기준 시군구 경계/bnd_sigungu_00_2024_2Q.shp"
-    dong_path = f"{base_path}/2. 경계/3. 2024년 2분기 기준 행정동 경계/bnd_dong_00_2024_2Q.shp"
+def _choose_col(df, candidates):
+    for c in candidates:
+        if c in df.columns:
+            return c
+    lc = [col.lower() for col in df.columns]
+    for c in candidates:
+        for i, col in enumerate(lc):
+            if c.lower() in col:
+                return df.columns[i]
+    return None
 
-    def _read_and_print(shp_path: str, label: str) -> gpd.GeoDataFrame:
-        """Read a shapefile using Read_GIS_File.read_shapefile and print a short summary (rows, columns, CRS, head)."""
+
+def _age_group_columns(df):
+    cols = [c for c in df.columns if c.startswith('age_group_')]
+    # sort by numeric suffix if possible
+    def key(c):
         try:
-            gdf = read_shapefile(shp_path)
-        except FileNotFoundError as e:
-            print(f"Shapefile not found for {label}: {shp_path}")
-            raise
-        except Exception as e:
-            print(f"Failed reading {label} shapefile: {e}")
-            raise
-
-        # Print summary similar to Read_GIS_File.main
-        print(f"\n=== {label} layer summary ===")
-        print(f"Path: {shp_path}")
-        print(f"Rows: {len(gdf):,}")
-        print(f"Columns ({len(gdf.columns)}): {list(gdf.columns)}")
-        print(f"CRS: {gdf.crs}")
-        print(f"\n=== Head (first 5 rows) for {label} ===")
-        try:
-            print(gdf.head())
+            return int(c.split('_')[-1])
         except Exception:
-            print("(unable to print head)")
-        return gdf
+            return c
+    return sorted(cols, key=key)
 
-    sido_gdf = _read_and_print(sido_path, '시도')
-    sigungu_gdf = _read_and_print(sigungu_path, '시군구')
-    dong_gdf = _read_and_print(dong_path, '동')
 
-    print(f"Loaded {len(sido_gdf)} 시도, {len(sigungu_gdf)} 시군구, {len(dong_gdf)} 동 regions")
-    # Prepare output directory for previews
-    preview_output_dir = "Dataset/기본데이터"
-    os.makedirs(preview_output_dir, exist_ok=True)
+def _choose_gdf_col(gdf, candidates):
+    # prefer exact match
+    for c in candidates:
+        if c in gdf.columns:
+            return c
+    # case-insensitive contains
+    lc = [col.lower() for col in gdf.columns]
+    for c in candidates:
+        cl = c.lower()
+        for i, col in enumerate(lc):
+            if cl in col:
+                return gdf.columns[i]
+    # fallback: try to find any column that looks like a code or name
+    for col in gdf.columns:
+        if 'cd' in col.lower() or 'code' in col.lower() or 'adm' in col.lower():
+            return col
+    for col in gdf.columns:
+        if 'nm' in col.lower() or 'name' in col.lower() or 'kor' in col.lower():
+            return col
+    # final fallback: return first column
+    return gdf.columns[0] if len(gdf.columns) > 0 else None
 
-    # Print previews of the shapefile data for verification BEFORE combining with population data
-    def _print_gdf_preview(gdf: gpd.GeoDataFrame, code_col: str, name_col: str, label: str, preview_n: int = 20) -> list:
-        """Return list of preview lines for the GeoDataFrame (also prints them)."""
-        lines = []
-        lines.append(f"--- {label} preview ---")
-        try:
-            lines.append(f"Columns: {gdf.columns.tolist()}")
-            lines.append(f"Total rows: {len(gdf)}")
-            n = min(preview_n, len(gdf))
-            if n == 0:
-                lines.append(f"No records in {label}")
-                for L in lines:
-                    print(L)
-                return lines
-            lines.append(f"Showing first {n} rows (index, {code_col}, {name_col}, geom_type, centroid):")
-            for i, r in gdf.head(n).iterrows():
-                code = r.get(code_col, '')
-                name = r.get(name_col, '')
-                geom = r.get('geometry', None)
-                geom_type = getattr(geom, 'geom_type', None)
-                try:
-                    if geom is not None:
-                        cy, cx = geom.centroid.y, geom.centroid.x
-                        lines.append(f"  idx={i} code={code} name={name} geom_type={geom_type} centroid=({cy:.6f},{cx:.6f})")
-                    else:
-                        lines.append(f"  idx={i} code={code} name={name} geom_type=None centroid=None")
-                except Exception:
-                    # Some geometries may fail centroid calculation
-                    lines.append(f"  idx={i} code={code} name={name} geom_type={geom_type} centroid=unavailable")
-            if len(gdf) > n:
-                lines.append(f"... and {len(gdf) - n} more rows")
-        except Exception as e:
-            lines.append(f"Failed to preview {label}: {e}")
 
-        # Print to console and return lines for file writing
-        for L in lines:
-            print(L)
-        return lines
+def generate_geojson_from_csv_and_shapefiles():
+    """Run Combine_Loca_Popu_Data.py, read the merged CSV and boundary shapefiles,
+    join attributes and write a single GeoJSON for downstream use.
+    """
+    repo_root = Path(__file__).resolve().parents[0]
 
-    shp_lines = []
-    shp_lines += _print_gdf_preview(sido_gdf, 'SIDO_CD', 'SIDO_NM', '시도')
-    shp_lines += _print_gdf_preview(sigungu_gdf, 'SIGUNGU_CD', 'SIGUNGU_NM', '시군구')
-    shp_lines += _print_gdf_preview(dong_gdf, 'ADM_DR_CD', 'ADM_DR_NM', '동')
-
-    # Write shapefile preview to a txt file for later inspection
+    # Ensure merged CSV exists by running Combine_Loca_Popu_Data.py (it may be a no-op if CSV exists)
     try:
-        shp_preview_path = os.path.join(preview_output_dir, 'shapefile_preview.txt')
-        with open(shp_preview_path, 'w', encoding='utf-8') as fh:
-            fh.write('\n'.join(shp_lines))
-        print(f"Wrote shapefile preview to: {shp_preview_path}")
-    except Exception as e:
-        print(f"Failed writing shapefile preview file: {e}")
-    
-    # Load population data
-    print("Loading population data...")
-    pop_dir = f"{base_path}/1. 통계/1. 2023년 행정구역 통계(인구)"
-    
-    total_pop = pd.read_csv(f"{pop_dir}/2024년기준_2023년_인구총괄(총인구).csv", encoding='cp949')
-    density = pd.read_csv(f"{pop_dir}/2024년기준_2023년_인구총괄(인구밀도).csv", encoding='cp949')
-    age_gender = pd.read_csv(f"{pop_dir}/2024년기준_2023년_성연령별인구.csv", encoding='cp949')
-    elderly_ratio = pd.read_csv(f"{pop_dir}/2024년기준_2023년_인구총괄(노령화지수).csv", encoding='cp949')
-    avg_age = pd.read_csv(f"{pop_dir}/2024년기준_2023년_인구총괄(평균나이).csv", encoding='cp949')
-    
-    # Print column names to understand structure
-    print("\n샘플 데이터 구조:")
-    print("Total Pop columns:", total_pop.columns.tolist())
-    print("Total Pop shape:", total_pop.shape)
-    print("Sido GDF columns:", sido_gdf.columns.tolist())
-    print("\n샘플 행:")
-    print(total_pop.head(3))
-    
-    def _norm_code(val: object) -> str:
-        s = str(val)
-        # remove decimal artifacts if read as float
-        if "." in s:
-            s = s.split(".")[0]
-        return s.strip()
-
-    # Build prefix-based lookup for multiple levels
-    def build_prefix_dict(df: pd.DataFrame, value_col_idx: int = 3) -> dict[int, dict[str, float]]:
-        out: dict[int, dict[str, float]] = {2: {}, 5: {}, 8: {}, 10: {}}
-        if len(df.columns) <= value_col_idx:
-            return out
-        for _, r in df.iterrows():
-            code = _norm_code(r.iloc[1])  # 행정구역코드
-            try:
-                value = float(r.iloc[value_col_idx]) if pd.notna(r.iloc[value_col_idx]) else 0.0
-            except Exception:
-                value = 0.0
-            for L in (2, 5, 8, 10):
-                if len(code) >= L:
-                    key = code[:L]
-                    out[L][key] = out[L].get(key, 0.0) + value
-        return out
-
-    pop_by_prefix = build_prefix_dict(total_pop, value_col_idx=3)
-    density_by_prefix = build_prefix_dict(density, value_col_idx=3)
-    elderly_by_prefix = build_prefix_dict(elderly_ratio, value_col_idx=3)
-    avg_age_by_prefix = build_prefix_dict(avg_age, value_col_idx=3)
-
-    print("\nPrefix dict sizes:")
-    for L in (2, 5, 8, 10):
-        print(f"  L={L}: pop={len(pop_by_prefix[L])}, dens={len(density_by_prefix[L])}")
-    
-    # Prepare CRS and area/centroids
-    # Assume all layers share CRS; if missing, default to EPSG:4326
-    for gdf in (sido_gdf, sigungu_gdf, dong_gdf):
-        if gdf.crs is None:
-            gdf.set_crs(epsg=4326, inplace=True)
-
-    # Precompute areas in a projected CRS (Korea 2000 / Unified CS EPSG:5179)
-    try:
-        sido_area = sido_gdf.to_crs(epsg=5179).area / 1_000_000
-        sigungu_area = sigungu_gdf.to_crs(epsg=5179).area / 1_000_000
-        dong_area = dong_gdf.to_crs(epsg=5179).area / 1_000_000
+        subprocess.run([sys.executable, str(repo_root / 'Combine_Loca_Popu_Data.py')], check=False)
     except Exception:
-        # Fallback: rough area in degrees^2 not meaningful, set to 0
-        sido_area = pd.Series([0.0] * len(sido_gdf), index=sido_gdf.index)
-        sigungu_area = pd.Series([0.0] * len(sigungu_gdf), index=sigungu_gdf.index)
-        dong_area = pd.Series([0.0] * len(dong_gdf), index=dong_gdf.index)
+        # continue even if running fails; we'll try to read the CSV
+        pass
 
-    # Combine data
-    combined_data = []
-    
-    print("\nProcessing geographic data...")
-    
-    # Process 시도 (Province/Metropolitan City)
-    for idx, row in sido_gdf.iterrows():
-        area_code = _norm_code(row.get('SIDO_CD', ''))
-        area_name = row.get('SIDO_NM', 'Unknown')
-        geometry = row['geometry']
-        
-        record = {
-            'administrative_level': '시도',
-            'area_code': area_code,
-            'area_name': area_name,
-            'total_population': pop_by_prefix[2].get(area_code[:2], 0.0),
-            'population_density': density_by_prefix[2].get(area_code[:2], 0.0),
-            'elderly_index': elderly_by_prefix[2].get(area_code[:2], 0.0),
-            'average_age': avg_age_by_prefix[2].get(area_code[:2], 0.0),
-            'geometry': geometry,
-            'centroid_lat': geometry.centroid.y,
-            'centroid_lon': geometry.centroid.x,
-            'area_sqkm': float(sido_area.loc[idx])
-        }
-        combined_data.append(record)
-        # Print the record as it's created for verification
-        print(f"[시도] idx={idx} code={record['area_code']} name={record['area_name']} pop={record['total_population']} dens={record['population_density']} elder_idx={record['elderly_index']} avg_age={record['average_age']} centroid=({record['centroid_lat']:.6f},{record['centroid_lon']:.6f}) area_km2={record['area_sqkm']:.4f} geom_type={geometry.geom_type}")
-    
-    # Process 시군구 (City/County/District)
-    for idx, row in sigungu_gdf.iterrows():
-        area_code = _norm_code(row.get('SIGUNGU_CD', ''))
-        area_name = row.get('SIGUNGU_NM', 'Unknown')
-        geometry = row['geometry']
-        
-        record = {
-            'administrative_level': '시군구',
-            'area_code': area_code,
-            'area_name': area_name,
-            'total_population': pop_by_prefix[5].get(area_code[:5], 0.0),
-            'population_density': density_by_prefix[5].get(area_code[:5], 0.0),
-            'elderly_index': elderly_by_prefix[5].get(area_code[:5], 0.0),
-            'average_age': avg_age_by_prefix[5].get(area_code[:5], 0.0),
-            'geometry': geometry,
-            'centroid_lat': geometry.centroid.y,
-            'centroid_lon': geometry.centroid.x,
-            'area_sqkm': float(sigungu_area.loc[idx])
-        }
-        combined_data.append(record)
-        # Print the record as it's created for verification
-        print(f"[시군구] idx={idx} code={record['area_code']} name={record['area_name']} pop={record['total_population']} dens={record['population_density']} elder_idx={record['elderly_index']} avg_age={record['average_age']} centroid=({record['centroid_lat']:.6f},{record['centroid_lon']:.6f}) area_km2={record['area_sqkm']:.4f} geom_type={geometry.geom_type}")
-    
-    # Process 동 (Administrative Dong)
-    for idx, row in dong_gdf.iterrows():
-        area_code = _norm_code(row.get('ADM_DR_CD', ''))
-        area_name = row.get('ADM_DR_NM', 'Unknown')
-        geometry = row['geometry']
-        # Prefer 10-digit match, fallback to 8-digit aggregation
-        pop_val = pop_by_prefix[10].get(area_code[:10], None)
-        if pop_val is None:
-            pop_val = pop_by_prefix[8].get(area_code[:8], 0.0)
-        dens_val = density_by_prefix[10].get(area_code[:10], None)
-        if dens_val is None:
-            dens_val = density_by_prefix[8].get(area_code[:8], 0.0)
-        eld_val = elderly_by_prefix[10].get(area_code[:10], None)
-        if eld_val is None:
-            eld_val = elderly_by_prefix[8].get(area_code[:8], 0.0)
-        avg_val = avg_age_by_prefix[10].get(area_code[:10], None)
-        if avg_val is None:
-            avg_val = avg_age_by_prefix[8].get(area_code[:8], 0.0)
+    csv_path = repo_root / 'Location_Population_Data' / 'combined_locations_population.csv'
+    if not csv_path.exists():
+        raise FileNotFoundError(f"Required CSV not found: {csv_path}")
 
-        record = {
+    df = pd.read_csv(csv_path, dtype=str, encoding='utf-8', low_memory=False)
+
+    # load only the 행정동 shapefile and determine its code/name columns
+    base = repo_root / 'Dataset' / '경계' / '경계' / '통계청_SGIS 행정구역 통계 및 경계_20240630' / '2. 경계'
+    dong_shp = base / '3. 2024년 2분기 기준 행정동 경계' / 'bnd_dong_00_2024_2Q.shp'
+
+    dong_gdf = gpd.read_file(str(dong_shp))
+
+    # determine dong code/name columns robustly and create uniform 'code' and 'name' columns
+    dong_code_col = _choose_gdf_col(dong_gdf, ['ADM_DR_CD', 'EMD_CD', 'ADM_CD', 'ADMD_CD', 'BJDONG_CD', 'CTP_CD'])
+    dong_name_col = _choose_gdf_col(dong_gdf, ['ADM_DR_NM', 'EMD_NM', 'ADM_NM', 'BJDONG_NM', 'NAME'])
+
+    def _norm_gdf_col_to_str(gdf, col):
+        if col is None:
+            return pd.Series([''] * len(gdf), index=gdf.index)
+        return gdf[col].astype(str).str.replace('\\.0$', '', regex=True).str.strip()
+
+    dong_gdf['code'] = _norm_gdf_col_to_str(dong_gdf, dong_code_col)
+    dong_gdf['name'] = _norm_gdf_col_to_str(dong_gdf, dong_name_col)
+
+    # prepare CSV columns
+    code_col = _choose_col(df, ['area_code', 'area code', 'area_code', '지역코드'])
+    city_col = _choose_col(df, ['city_name', 'sido', 'SIDO_NM', 'city'])
+    district_col = _choose_col(df, ['district_name', 'sigungu', 'SIGUNGU_NM', 'district'])
+    area_name_col = _choose_col(df, ['area_name', 'area', 'ADM_NM', 'area_name'])
+
+    total_col = _choose_col(df, ['total_population', '총 인구', '총인구', 'to_in_001', 'in_001'])
+    avg_col = _choose_col(df, ['average_age', '평균 나이', 'to_in_002'])
+    dens_col = _choose_col(df, ['population_density', '인구밀도', 'to_in_003'])
+    aging_col = _choose_col(df, ['aging_index', '노령화지수', 'to_in_004', 'aging_index'])
+    elder_dep_col = _choose_col(df, ['elderly_dependency_ratio', 'elderly_dependency'])
+    youth_dep_col = _choose_col(df, ['youth_dependency_ratio', 'youth_dependency'])
+    male_col = _choose_col(df, ['total_population_male', 'male'])
+    female_col = _choose_col(df, ['total_population_female', 'female'])
+
+    age_cols = _age_group_columns(df)
+
+    # helper to safely get numeric values
+    def _num(val):
+        try:
+            if val is None or val == '' or pd.isna(val):
+                return 0.0
+            return float(str(val).replace(',', '').strip())
+        except Exception:
+            return 0.0
+
+    # We only need 동 records that match the queried city/district/area from main.py
+    try:
+        import main as main_mod
+        location_si = getattr(main_mod, 'location_si', None)
+        location_gu = getattr(main_mod, 'location_gu', None)
+        location_dong = getattr(main_mod, 'location_dong', None)
+    except Exception:
+        location_si = location_gu = location_dong = None
+
+    # prepare CSV columns
+    code_col = _choose_col(df, ['area_code', 'area code', 'area_code', '지역코드'])
+    city_col = _choose_col(df, ['city_name', 'sido', 'SIDO_NM', 'city'])
+    district_col = _choose_col(df, ['district_name', 'sigungu', 'SIGUNGU_NM', 'district'])
+    area_name_col = _choose_col(df, ['area_name', 'area', 'ADM_NM', 'area_name'])
+
+    total_col = _choose_col(df, ['total_population', '총 인구', '총인구', 'to_in_001', 'in_001'])
+    avg_col = _choose_col(df, ['average_age', '평균 나이', 'to_in_002'])
+    dens_col = _choose_col(df, ['population_density', '인구밀도', 'to_in_003'])
+    aging_col = _choose_col(df, ['aging_index', '노령화지수', 'to_in_004', 'aging_index'])
+    elder_dep_col = _choose_col(df, ['elderly_dependency_ratio', 'elderly_dependency'])
+    youth_dep_col = _choose_col(df, ['youth_dependency_ratio', 'youth_dependency'])
+    male_col = _choose_col(df, ['total_population_male', 'male'])
+    female_col = _choose_col(df, ['total_population_female', 'female'])
+
+    # filter merged CSV by provided location parts (require all three if provided)
+    matched = df
+    try:
+        if city_col and location_si:
+            matched = matched[matched[city_col].astype(str).str.contains(str(location_si), case=False, na=False)]
+        if district_col and location_gu:
+            matched = matched[matched[district_col].astype(str).str.contains(str(location_gu), case=False, na=False)]
+        if area_name_col and location_dong:
+            matched = matched[matched[area_name_col].astype(str).str.contains(str(location_dong), case=False, na=False)]
+    except Exception:
+        matched = df
+
+    records = []
+
+    # For each matched CSV row, find corresponding dong geometry and produce a single '동' record
+    for _, row in matched.iterrows():
+        area_code = str(row.get(code_col, '')).strip() if code_col else ''
+        # find geometry in dong_gdf by code equality
+        geom_row = dong_gdf[dong_gdf['code'].astype(str) == area_code]
+        if len(geom_row) == 0:
+            # try startswith fallback
+            geom_row = dong_gdf[dong_gdf['code'].astype(str).str.startswith(area_code)] if area_code else geom_row
+        if len(geom_row) == 0:
+            # skip if no geometry
+            continue
+        geom = geom_row.iloc[0].geometry
+
+        city_val = row.get(city_col, '') if city_col else ''
+        district_val = row.get(district_col, '') if district_col else ''
+        area_val = row.get(area_name_col, '') if area_name_col else ''
+
+        rec = {
             'administrative_level': '동',
             'area_code': area_code,
-            'area_name': area_name,
-            'total_population': pop_val,
-            'population_density': dens_val,
-            'elderly_index': eld_val,
-            'average_age': avg_val,
-            'geometry': geometry,
-            'centroid_lat': geometry.centroid.y,
-            'centroid_lon': geometry.centroid.x,
-            'area_sqkm': float(dong_area.loc[idx])
+            'area_name': f"{city_val} / {district_val} / {area_val}",
+            'total_population': int(_num(row[total_col])) if total_col and total_col in row.index else 0,
+            'average_age': float(_num(row[avg_col])) if avg_col and avg_col in row.index else 0.0,
+            'population_density': float(_num(row[dens_col])) if dens_col and dens_col in row.index else 0.0,
+            'aging_index': float(_num(row[aging_col])) if aging_col and aging_col in row.index else 0.0,
+            'elderly_dependency_ratio': float(_num(row[elder_dep_col])) if elder_dep_col and elder_dep_col in row.index else 0.0,
+            'youth_dependency_ratio': float(_num(row[youth_dep_col])) if youth_dep_col and youth_dep_col in row.index else 0.0,
+            'total_population_male': int(_num(row[male_col])) if male_col and male_col in row.index else 0,
+            'total_population_female': int(_num(row[female_col])) if female_col and female_col in row.index else 0,
+            'geometry': geom
         }
-        combined_data.append(record)
-        # Print the record as it's created for verification
-        print(f"[동] idx={idx} code={record['area_code']} name={record['area_name']} pop={record['total_population']} dens={record['population_density']} elder_idx={record['elderly_index']} avg_age={record['average_age']} centroid=({record['centroid_lat']:.6f},{record['centroid_lon']:.6f}) area_km2={record['area_sqkm']:.4f} geom_type={geometry.geom_type}")
-    
-    result_gdf = gpd.GeoDataFrame(combined_data, geometry='geometry')
-    # Carry CRS from one of the inputs (default to EPSG:4326)
-    crs_to_set = sido_gdf.crs or sigungu_gdf.crs or dong_gdf.crs or "EPSG:4326"
+        records.append(rec)
+
+    result_gdf = gpd.GeoDataFrame(records, geometry='geometry')
     try:
-        result_gdf.set_crs(crs_to_set, inplace=True, allow_override=True)
+        result_gdf.set_crs(dong_gdf.crs, inplace=True)
     except Exception:
         pass
-    
-    print(f"\nCreated combined dataset with {len(result_gdf)} regions")
-    
-    # Create output directory if it doesn't exist
-    output_dir = "Dataset/기본데이터"
-    os.makedirs(output_dir, exist_ok=True)
-    
-    # Save to CSV (without geometry column)
-    csv_df = result_gdf.drop('geometry', axis=1)
-    csv_path = f"{output_dir}/지역별_인구_경계_데이터.csv"
-    # Print CSV rows line-by-line for verification before saving
-    print("\n--- CSV preview: printing each row to verify values before writing ---")
-    # Build preview lines and also write to file
-    csv_preview_lines = []
-    header = ','.join(csv_df.columns.tolist())
-    print(header)
-    csv_preview_lines.append(header)
-    for i, row in csv_df.iterrows():
-        # Convert NaNs to empty strings for clearer print
-        values = [('' if pd.isna(v) else str(v)) for v in row.tolist()]
-        line = ','.join(values)
-        print(line)
-        csv_preview_lines.append(line)
 
-    # Write CSV preview to a txt file
-    try:
-        csv_preview_path = os.path.join(output_dir, 'csv_preview.txt')
-        with open(csv_preview_path, 'w', encoding='utf-8') as fh:
-            fh.write('\n'.join(csv_preview_lines))
-        print(f"Wrote CSV preview to: {csv_preview_path}")
-    except Exception as e:
-        print(f"Failed writing CSV preview file: {e}")
+    out_geojson = repo_root / 'Location_Population_Data' / 'combined_locations_population.geojson'
+    out_geojson.parent.mkdir(parents=True, exist_ok=True)
+    # write geojson (contains only matched 동 features)
+    result_gdf.to_file(str(out_geojson), driver='GeoJSON', encoding='utf-8')
 
-    csv_df.to_csv(csv_path, index=False, encoding='cp949')
-    print(f"Saved CSV file to: {csv_path}")
-    
-    # Save as GeoJSON for spatial queries
-    geojson_path = f"{output_dir}/지역별_인구_경계_데이터.geojson"
-    # Allow large GeoJSON objects when writing
-    os.environ.setdefault("OGR_GEOJSON_MAX_OBJ_SIZE", "0")
-    result_gdf.to_file(geojson_path, driver='GeoJSON', encoding='cp949')
-    print(f"Saved GeoJSON file to: {geojson_path}")
-    
-    # Print summary statistics
+    # summary statistics print
     print("\n=== Summary Statistics ===")
-    print(f"Total regions: {len(result_gdf)}")
+    # we only created 동-level features here
     print(f"시도: {len(result_gdf[result_gdf['administrative_level'] == '시도'])}")
     print(f"시군구: {len(result_gdf[result_gdf['administrative_level'] == '시군구'])}")
     print(f"동: {len(result_gdf[result_gdf['administrative_level'] == '동'])}")
     print(f"\nTotal population: {result_gdf['total_population'].sum():,.0f}")
-    print(f"Average density: {result_gdf['population_density'].mean():.2f} people/km²")
-    
+
     return result_gdf
 
-if __name__ == "__main__":
-    print("Starting geospatial data processing...")
-    df = combine_boundary_population_data()
-    print("\n✓ Processing complete!")
+
+def query_location_and_write_text(result_gdf):
+    """Read location_si/gu/dong from main.py, query the GeoDataFrame and write a simple text report."""
+    try:
+        import main as main_mod
+        location_si = getattr(main_mod, 'location_si', None)
+        location_gu = getattr(main_mod, 'location_gu', None)
+        location_dong = getattr(main_mod, 'location_dong', None)
+    except Exception:
+        location_si = location_gu = location_dong = None
+
+    matched = result_gdf
+    try:
+        if location_si:
+            matched = matched[matched['area_name'].astype(str).str.contains(str(location_si), na=False, case=False)]
+        if location_gu:
+            matched = matched[matched['area_name'].astype(str).str.contains(str(location_gu), na=False, case=False)]
+        if location_dong:
+            matched = matched[matched['area_name'].astype(str).str.contains(str(location_dong), na=False, case=False)]
+    except Exception:
+        matched = result_gdf
+
+    out_lines = []
+    out_lines.append(f"Querying for: {location_si} / {location_gu} / {location_dong}")
+    if matched is None or len(matched) == 0:
+        out_lines.append("No matching feature found in GeoJSON for requested location")
+    else:
+        out_lines.append(f"Found {len(matched)} matching feature(s). Showing first:")
+        row = matched.iloc[0]
+        # write requested fields
+        out_lines.append(f"administrative_level: {row['administrative_level']}")
+        out_lines.append(f"area_code: {row['area_code']}")
+        out_lines.append(f"area_name: {row['area_name']}")
+        out_lines.append(f"age_wise_population: {row['age_wise_population']}")
+        out_lines.append(f"total_population: {row['total_population']}")
+        out_lines.append(f"average_age: {row['average_age']}")
+        out_lines.append(f"population_density: {row['population_density']}")
+        out_lines.append(f"aging_index: {row['aging_index']}")
+        out_lines.append(f"elderly_dependency_ratio: {row['elderly_dependency_ratio']}")
+        out_lines.append(f"youth_dependency_ratio: {row['youth_dependency_ratio']}")
+        out_lines.append(f"total_population_male: {row['total_population_male']}")
+        out_lines.append(f"total_population_female: {row['total_population_female']}")
+
+    out_path = Path(__file__).resolve().parents[0] / 'Location_Population_Data' / 'location_query_result.txt'
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(out_path, 'w', encoding='utf-8') as fh:
+        fh.write('\n'.join(out_lines))
+
+    print(f"Wrote query result to: {out_path}")
+
+
+if __name__ == '__main__':
+    print('Running Combine_Loca_Popu_Data.py (if needed) and generating GeoJSON...')
+    gdf = generate_geojson_from_csv_and_shapefiles()
+    query_location_and_write_text(gdf)
+    print('\n✓ Processing complete!')

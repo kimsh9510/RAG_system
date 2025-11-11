@@ -3,9 +3,9 @@ import os
 # Query context variables (Option A): define these BEFORE importing build_vectorstores
 # so the geospatial loader can read them from the running main module (__main__).
 # Modify these values here as needed for your query.
-location_si = "서울시"
-location_gu = "서초구"
-location_dong = "서초동"
+location_si = "서울특별시"
+location_gu = "노원구"
+location_dong = "중계1동"
 disaster = "침수"
 
 from langgraph.graph import StateGraph, START, END
@@ -76,9 +76,9 @@ def build_graph(disaster: str = None):
 if __name__ == "__main__":
     # Example usage: pick a disaster and location and run the graph
     disaster = "침수"
-    location_si = "서울시"
-    location_gu = "서초구"
-    location_dong = "서초동"
+    location_si = "서울특별시"
+    location_gu = "노원구"
+    location_dong = "중계1동"
 
     app = build_graph(disaster)
     result = app.invoke({
