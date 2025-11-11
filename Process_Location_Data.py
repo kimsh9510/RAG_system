@@ -1,11 +1,22 @@
 """
-Process_GIS_Files.py
+Utilities for working with GIS shapefiles and combining location CSVs.
 
-Combined utilities for reading GIS shapefiles and combining location CSVs.
+This module contains two main helpers geared for beginners:
 
-Provides two classes:
- - ReadGISFile: read shapefile layers, export attribute tables to CSV, and optional plotting
- - CombineLocation: combine city/district/area CSVs into nested JSON/flat CSV
+- ReadGISFile: simple wrapper around geopandas for reading a shapefile,
+    exporting its attribute table to CSV, and optionally plotting (if
+    geopandas/matplotlib are installed).
+
+- CombineLocation: helpers to read three administrative-level CSVs
+    (city / district / area), detect the code/name columns, infer
+    parent/child relationships using code prefixes, and write the
+    combined result as (a) nested JSON and (b) a flattened CSV.
+
+Design goals (for new contributors):
+- Keep the code small and dependency-light where possible.
+- Use clear, defensive IO (handle missing files, report helpful messages).
+- Prefer readable logic (prefix matching) over complex heuristics so
+    beginners can follow how codes map into a nested structure.
 """
 
 from __future__ import annotations
@@ -43,17 +54,25 @@ class ReadGISFile:
         self.plot = plot
 
     def read_shapefile(self, shp_path: str) -> Any:
+        # Use geopandas to read the shapefile. We don't import geopandas at
+        # module import time because it can be an optional dependency. If
+        # geopandas is not available, raise a clear error so users know what
+        # to install.
         if gpd is None:
             raise RuntimeError("geopandas is required to read shapefiles. Please install it in your environment.")
         if not os.path.exists(shp_path):
             raise FileNotFoundError(f"Shapefile not found: {shp_path}")
+        # gpd.read_file returns a GeoDataFrame (pandas-like). We simply return
+        # it to the caller who can then access columns or geometry.
         gdf = gpd.read_file(shp_path)
         return gdf
 
     def export_attributes(self, gdf: Any, csv_path: Optional[str]) -> None:
-        # Convert geometry to WKT so it can be saved in tabular formats
+        # Export the attribute table (columns) to CSV. Geometry cannot be
+        # stored natively in plain CSV, so convert it to WKT text if present.
         df = gdf.copy()
         if 'geometry' in df.columns:
+            # to_wkt() is convenient to serialize geometries as text
             df["geometry_wkt"] = df.geometry.to_wkt()
             df_no_geom = df.drop(columns=["geometry"])
         else:
@@ -61,19 +80,11 @@ class ReadGISFile:
 
         if csv_path:
             os.makedirs(os.path.dirname(csv_path) or ".", exist_ok=True)
+            # Use pandas' to_csv which handles proper quoting/encoding for the
+            # attribute table. We don't change encoding here; callers can
+            # re-open with the expected encoding if needed.
             df_no_geom.to_csv(csv_path, index=False)
             print(f"✓ Saved CSV:   {csv_path}")
-
-    def plot_gdf(self, gdf: Any, title: str) -> None:
-        if plt is None:
-            raise RuntimeError("matplotlib is required to plot. Please install matplotlib.")
-        ax = gdf.plot(edgecolor="black", facecolor="lightcoral", figsize=(10, 8))
-        ax.set_title(title, fontsize=14)
-        ax.set_xlabel("Longitude / X")
-        ax.set_ylabel("Latitude / Y")
-        plt.tight_layout()
-        plt.show()
-
 
 class CombineLocation:
     """Combine three administrative-level CSVs (city, district, area) into nested JSON/CSV."""
@@ -85,6 +96,8 @@ class CombineLocation:
         except OverflowError:
             csv.field_size_limit(2**31 - 1)
 
+        # Read CSV robustly and return a list of headers (original names)
+        # and a list of row dictionaries with stripped whitespace.
         with open(path, newline='', errors='replace') as f:
             reader = csv.DictReader(f)
             rows = [{k: (v.strip() if v is not None else '') for k, v in row.items()} for row in reader]
@@ -93,11 +106,16 @@ class CombineLocation:
 
     @staticmethod
     def detect_code_column(headers: List[str], rows: List[Dict[str, str]]) -> Optional[str]:
+        # Heuristic 1: header name contains words like 'code', 'adm', or the
+        # Korean '코드'. If any header matches, return it immediately.
         patterns = [r'code', r'cd\b', r'adm', r'코드', r'ADM']
         for h in headers:
             for p in patterns:
                 if re.search(p, h, re.I):
                     return h
+
+        # Heuristic 2: prefer a column where most values are numeric (codes
+        # are often numeric strings). Compute a simple ratio of numeric rows.
         numeric_scores = {}
         for h in headers:
             cnt = 0
@@ -113,17 +131,23 @@ class CombineLocation:
                 numeric_scores[h] = cnt / total
         if numeric_scores:
             best, score = max(numeric_scores.items(), key=lambda kv: kv[1])
+            # if more than half of values are numeric, assume this is the code
             if score > 0.5:
                 return best
+
+        # Fallback: return the first header so the caller still gets something
         return headers[0] if headers else None
 
     @staticmethod
     def detect_name_column(headers: List[str], rows: List[Dict[str, str]]) -> Optional[str]:
+        # Heuristic: look for common variants of 'name' in English/Korean.
         patterns = [r'name', r'nm\b', r'NAME', r'NM', r'명', r'이름', r'명칭']
         for h in headers:
             for p in patterns:
                 if re.search(p, h, re.I):
                     return h
+
+        # If no explicit name-like header, pick the first non-code-like header.
         for h in headers:
             if not re.search(r'code|cd|adm', h, re.I):
                 return h
@@ -180,7 +204,8 @@ class CombineLocation:
         c_lens = cls.detect_code_lengths(c_rows, c_code)
         d_lens = cls.detect_code_lengths(d_rows, d_code)
         a_lens = cls.detect_code_lengths(a_rows, a_code)
-
+        # Determine the most common code length at each level. This helps when
+        # codes are hierarchical by prefix (common in administrative codes).
         c_pref = c_lens[0] if c_lens else 0
         d_pref = d_lens[0] if d_lens else 0
         a_pref = a_lens[0] if a_lens else 0
@@ -188,6 +213,10 @@ class CombineLocation:
         city_list: List[Dict] = []
         district_areas: Dict[str, List[Dict]] = {dcode: [] for dcode in districts}
         for acode, ainfo in areas.items():
+            # Find the district that should be the parent of this area code.
+            # We first try a prefix of length d_pref (the typical district code
+            # length). If that fails, fall back to checking startswith for any
+            # district code. If still not found, consider the area an orphan.
             parent = None
             if d_pref and len(acode) >= d_pref:
                 prefix = acode[:d_pref]
@@ -201,11 +230,17 @@ class CombineLocation:
             if parent:
                 district_areas.setdefault(parent, []).append({'code': acode, 'name': ainfo.get('name', '')})
             else:
+                # Keep unknowns together so users can inspect and decide what to do
+                # with them manually.
                 district_areas.setdefault('__orphan_areas__', []).append({'code': acode, 'name': ainfo.get('name', '')})
 
         for ccode, cinfo in cities.items():
             city_obj = {'code': ccode, 'name': cinfo.get('name', ''), 'districts': []}
             for dcode, dinfo in districts.items():
+                # Determine if the district belongs to this city. We use two
+                # simple heuristics: matching prefixes of the detected length
+                # or a `startswith` relationship. These are easy to understand
+                # and work for typical hierarchical administrative codes.
                 belongs = False
                 if c_pref and len(dcode) >= c_pref and dcode[:c_pref] == ccode[:c_pref]:
                     belongs = True
@@ -218,6 +253,8 @@ class CombineLocation:
 
         assigned_districts = {d['code'] for c in city_list for d in c['districts']}
         unassigned = [dcode for dcode in districts.keys() if dcode not in assigned_districts]
+        # If some districts weren't assigned to any city, gather them under a
+        # sentinel 'Orphan districts' node so they are visible in the output.
         if unassigned:
             orphan_city = {'code': '__orphan_districts__', 'name': 'Orphan districts', 'districts': []}
             for dcode in unassigned:
@@ -225,6 +262,8 @@ class CombineLocation:
                 orphan_city['districts'].append({'code': dcode, 'name': dinfo.get('name',''), 'areas': district_areas.get(dcode, [])})
             city_list.append(orphan_city)
 
+        # Similarly, if areas couldn't be mapped to any district, expose them
+        # so the user can inspect and correct mappings if necessary.
         if district_areas.get('__orphan_areas__'):
             orphan_city = {'code': '__orphan_areas__', 'name': 'Orphan areas', 'districts': [{'code': '__orphan__', 'name': 'Unassigned', 'areas': district_areas.get('__orphan_areas__')}]} 
             city_list.append(orphan_city)

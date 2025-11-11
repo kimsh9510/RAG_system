@@ -1,8 +1,37 @@
+"""
+Process_GIS_Data.py
+
+This script reads the merged CSV `Location_Population_Data/combined_locations_population.csv`
+and produces two outputs in one pass:
+
+- `Location_Population_Data/combined_locations_population.geojson` — a properties-only
+    GeoJSON FeatureCollection (no geometry) where each feature.properties contains
+    demographic and population attributes for an administrative area.
+- `Location_Population_Data/location_query_result.txt` — a small human-readable
+    report filtered by optional location variables parsed from `main.py`.
+
+Behavior notes for beginners:
+- The script intentionally avoids reading shapefiles and relies only on the
+    combined CSV. It runs `Combine_Loca_Popu_Data.py` first (if present) to
+    ensure the combined CSV exists.
+- Column detection is heuristic: helpers try common English and Korean column
+    names and fall back gracefully when a column is missing.
+"""
+
 from pathlib import Path
 import pandas as pd
-import geopandas as gpd
+import json
+import re
+import subprocess
+import sys
 
 def _choose_col(df, candidates):
+    """Pick the best-matching column from `candidates`.
+
+    1. Try exact (case-sensitive) matches first.
+    2. Then try case-insensitive substring matches.
+    Returns the actual DataFrame column name or None if nothing matches.
+    """
     for c in candidates:
         if c in df.columns:
             return c
@@ -15,8 +44,9 @@ def _choose_col(df, candidates):
 
 
 def _age_group_columns(df):
-    # Find columns that represent age groups. Accept several naming patterns.
-    import re
+    # Find columns that represent age groups using a few common patterns. The
+    # function returns a list of column names sorted by the trailing number
+    # where present (so age_group_001, age_group_002, ... will be ordered).
     pattern1 = re.compile(r'age[_\s-]?group[_\s-]?(\d+)', re.IGNORECASE)
     pattern2 = re.compile(r'^(to_in_|age_group_|agegroup_|age_).*\d+', re.IGNORECASE)
     matches = []
@@ -24,7 +54,7 @@ def _age_group_columns(df):
         if pattern1.search(c) or pattern2.search(c) or ('age' in c.lower() and any(ch.isdigit() for ch in c)):
             matches.append(c)
 
-    # try to sort by trailing number when present
+    # try to sort by trailing numeric suffix when present so age buckets are ordered
     def key(c):
         m = re.search(r'(\d+)(?!.*\d)', c)
         if m:
@@ -34,110 +64,86 @@ def _age_group_columns(df):
     return sorted(matches, key=key)
 
 
-def _choose_gdf_col(gdf, candidates):
-    # prefer exact match
-    for c in candidates:
-        if c in gdf.columns:
-            return c
-    # case-insensitive contains
-    lc = [col.lower() for col in gdf.columns]
-    for c in candidates:
-        cl = c.lower()
-        for i, col in enumerate(lc):
-            if cl in col:
-                return gdf.columns[i]
-    # fallback: try to find any column that looks like a code or name
-    for col in gdf.columns:
-        if 'cd' in col.lower() or 'code' in col.lower() or 'adm' in col.lower():
-            return col
-    for col in gdf.columns:
-        if 'nm' in col.lower() or 'name' in col.lower() or 'kor' in col.lower():
-            return col
-    # final fallback: return first column
-    return gdf.columns[0] if len(gdf.columns) > 0 else None
+def _read_locations_from_main(root: Path):
+    main_path = root / 'main.py'
+    if not main_path.exists():
+        return None, None, None
+    try:
+        import ast
+        src = main_path.read_text(encoding='utf-8')
+        tree = ast.parse(src)
+        vals = {}
+        # Walk top-level assignments in main.py and attempt to read literal
+        # values for location_si/location_gu/location_dong. We avoid importing
+        # main.py to prevent executing arbitrary code; instead we parse the AST
+        # and use literal_eval when possible.
+        for node in tree.body:
+            if isinstance(node, ast.Assign):
+                for target in node.targets:
+                    if isinstance(target, ast.Name) and target.id in ('location_si', 'location_gu', 'location_dong'):
+                        try:
+                            vals[target.id] = ast.literal_eval(node.value)
+                        except Exception:
+                            # For non-literal AST nodes try a couple of attributes
+                            # that sometimes hold simple values in older ASTs.
+                            try:
+                                if hasattr(node.value, 's'):
+                                    vals[target.id] = node.value.s
+                                elif hasattr(node.value, 'value'):
+                                    vals[target.id] = node.value.value
+                                else:
+                                    vals[target.id] = None
+                            except Exception:
+                                vals[target.id] = None
+        return vals.get('location_si'), vals.get('location_gu'), vals.get('location_dong')
+    except Exception:
+        return None, None, None
 
 
-def generate_geojson_from_csv_and_shapefiles():
+def _num(val):
+    # Safely parse a numeric-looking value to float. Accepts strings like
+    # '1,234' and treats empty/None/NaN as 0.0 without raising.
+    try:
+        if val is None or val == '' or pd.isna(val):
+            return 0.0
+        return float(str(val).replace(',', '').strip())
+    except Exception:
+        return 0.0
 
+
+def process_csv_and_write_outputs():
     repo_root = Path(__file__).resolve().parents[0]
 
-    # Do NOT run other scripts here. Expect the merged CSV to already exist.
-    # If it's missing, raise a clear error so the caller/user can run the generator separately.
+    # Ensure the combined CSV exists by running the combine script first.
+    # Running the combine script here keeps this module self-contained: if the
+    # CSV needs to be generated we run the generator, otherwise the call is
+    # cheap and quick.
+    combine_script = repo_root / 'Combine_Loca_Popu_Data.py'
+    if combine_script.exists():
+        try:
+            subprocess.run([sys.executable, str(combine_script)], cwd=str(repo_root), check=True)
+        except subprocess.CalledProcessError as e:
+            # Bubble up a clear error so callers know the combine step failed.
+            raise RuntimeError(f"Combine_Loca_Popu_Data.py failed: {e}") from e
+    else:
+        # No combine script found; proceed — the CSV check below will fail
+        # with a clear message if the CSV truly is missing.
+        pass
 
     csv_path = repo_root / 'Location_Population_Data' / 'combined_locations_population.csv'
     if not csv_path.exists():
         raise FileNotFoundError(f"Required CSV not found: {csv_path}")
 
+    # Read the merged CSV that should already contain combined location and
+    # population columns. We read everything as strings and convert numbers
+    # explicitly to avoid surprises with pandas auto-conversion.
     df = pd.read_csv(csv_path, dtype=str, encoding='utf-8', low_memory=False)
 
-    # load only the 행정동 shapefile and determine its code/name columns
-    base = repo_root / 'Dataset' / '경계' / '경계' / '통계청_SGIS 행정구역 통계 및 경계_20240630' / '2. 경계'
-    dong_shp = base / '3. 2024년 2분기 기준 행정동 경계' / 'bnd_dong_00_2024_2Q.shp'
-
-    dong_gdf = gpd.read_file(str(dong_shp))
-
-    # determine dong code/name columns robustly and create uniform 'code' and 'name' columns
-    dong_code_col = _choose_gdf_col(dong_gdf, ['ADM_DR_CD', 'EMD_CD', 'ADM_CD', 'ADMD_CD', 'BJDONG_CD', 'CTP_CD'])
-    dong_name_col = _choose_gdf_col(dong_gdf, ['ADM_DR_NM', 'EMD_NM', 'ADM_NM', 'BJDONG_NM', 'NAME'])
-
-    def _norm_gdf_col_to_str(gdf, col):
-        if col is None:
-            return pd.Series([''] * len(gdf), index=gdf.index)
-        return gdf[col].astype(str).str.replace('\\.0$', '', regex=True).str.strip()
-
-    dong_gdf['code'] = _norm_gdf_col_to_str(dong_gdf, dong_code_col)
-    dong_gdf['name'] = _norm_gdf_col_to_str(dong_gdf, dong_name_col)
-
-    # (CSV column detection is done later after reading location preferences)
-
-    # helper to safely get numeric values
-    def _num(val):
-        try:
-            if val is None or val == '' or pd.isna(val):
-                return 0.0
-            return float(str(val).replace(',', '').strip())
-        except Exception:
-            return 0.0
-
-    # We only need 동 records that match the queried city/district/area from main.py
-    # Instead of importing main (which may run heavy side-effects), parse main.py AST to extract variables safely.
-    def _read_locations_from_main(root: Path):
-        main_path = root / 'main.py'
-        if not main_path.exists():
-            return None, None, None
-        try:
-            import ast
-            src = main_path.read_text(encoding='utf-8')
-            tree = ast.parse(src)
-            vals = {}
-            for node in tree.body:
-                if isinstance(node, ast.Assign):
-                    for target in node.targets:
-                        if isinstance(target, ast.Name) and target.id in ('location_si', 'location_gu', 'location_dong'):
-                            try:
-                                vals[target.id] = ast.literal_eval(node.value)
-                            except Exception:
-                                # fallback for non-literal values
-                                try:
-                                    if hasattr(node.value, 's'):
-                                        vals[target.id] = node.value.s
-                                    elif hasattr(node.value, 'value'):
-                                        vals[target.id] = node.value.value
-                                    else:
-                                        vals[target.id] = None
-                                except Exception:
-                                    vals[target.id] = None
-            return vals.get('location_si'), vals.get('location_gu'), vals.get('location_dong')
-        except Exception:
-            return None, None, None
-
-    location_si, location_gu, location_dong = _read_locations_from_main(repo_root)
-
-    # prepare CSV columns
-    code_col = _choose_col(df, ['area_code', 'area code', 'area_code', '지역코드'])
+    # detect likely columns in the CSV
+    code_col = _choose_col(df, ['area_code', 'area code', '지역코드', 'code'])
     city_col = _choose_col(df, ['city_name', 'sido', 'SIDO_NM', 'city'])
     district_col = _choose_col(df, ['district_name', 'sigungu', 'SIGUNGU_NM', 'district'])
-    area_name_col = _choose_col(df, ['area_name', 'area', 'ADM_NM', 'area_name'])
+    area_name_col = _choose_col(df, ['area_name', 'area', 'ADM_NM', 'area_name', 'name'])
 
     total_col = _choose_col(df, ['total_population', '총 인구', '총인구', 'to_in_001', 'in_001'])
     avg_col = _choose_col(df, ['average_age', '평균 나이', 'to_in_002'])
@@ -150,7 +156,13 @@ def generate_geojson_from_csv_and_shapefiles():
 
     age_cols = _age_group_columns(df)
 
-    # filter merged CSV by provided location parts (require all three if provided)
+    # read desired location parts from main.py (safe AST parse). These are
+    # optional filters used to produce a targeted text report below.
+    location_si, location_gu, location_dong = _read_locations_from_main(repo_root)
+
+    # Filter the merged CSV using the optional location variables extracted
+    # from main.py. We perform case-insensitive substring matching so users
+    # can provide partial names (e.g., 'Seoul' or '서울').
     matched = df
     try:
         if city_col and location_si:
@@ -162,20 +174,11 @@ def generate_geojson_from_csv_and_shapefiles():
     except Exception:
         matched = df
 
+    # Build a list of property dictionaries (one per matched CSV row). We do
+    # explicit numeric parsing so the output types are predictable.
     records = []
-
-    # For each matched CSV row, find corresponding dong geometry and produce a single '동' record
     for _, row in matched.iterrows():
         area_code = str(row.get(code_col, '')).strip() if code_col else ''
-        # find geometry in dong_gdf by code equality
-        geom_row = dong_gdf[dong_gdf['code'].astype(str) == area_code]
-        if len(geom_row) == 0:
-            # try startswith fallback
-            geom_row = dong_gdf[dong_gdf['code'].astype(str).str.startswith(area_code)] if area_code else geom_row
-        if len(geom_row) == 0:
-            # skip if no matching dong found
-            continue
-
         city_val = row.get(city_col, '') if city_col else ''
         district_val = row.get(district_col, '') if district_col else ''
         area_val = row.get(area_name_col, '') if area_name_col else ''
@@ -198,99 +201,33 @@ def generate_geojson_from_csv_and_shapefiles():
         }
         records.append(rec)
 
-    # We no longer need geometry in the output GeoJSON; build a FeatureCollection with properties only
-    features = []
-    for rec in records:
-        # properties only; no geometry key
-        props = dict(rec)
-        # ensure no geometry field exists
-        props.pop('geometry', None)
-        features.append({
-            "type": "Feature",
-            "properties": props
-        })
+    # Build GeoJSON FeatureCollection containing only properties (no geometry).
+    features = [{
+        'type': 'Feature',
+        'properties': rec
+    } for rec in records]
 
     feature_collection = {
-        "type": "FeatureCollection",
-        "features": features
+        'type': 'FeatureCollection',
+        'features': features
     }
 
     out_geojson = repo_root / 'Location_Population_Data' / 'combined_locations_population.geojson'
     out_geojson.parent.mkdir(parents=True, exist_ok=True)
-    import json
-    # remove existing file if present so we always create/overwrite
-    try:
-        out_geojson.unlink(missing_ok=True)
-    except TypeError:
-        # Python <3.8 fallback
-        if out_geojson.exists():
-            out_geojson.unlink()
-
+    # write GeoJSON
     with open(out_geojson, 'w', encoding='utf-8') as fh:
         json.dump(feature_collection, fh, ensure_ascii=False, indent=2)
 
-    # summary statistics print
-    print("\n=== Summary Statistics ===")
-    # Count by administrative level in the records
-    total_pop_sum = 0
-    level_counts = {"시도": 0, "시군구": 0, "동": 0}
-    for rec in records:
-        lvl = rec.get('administrative_level')
-        if lvl in level_counts:
-            level_counts[lvl] += 1
-        total_pop_sum += int(rec.get('total_population', 0) or 0)
-
-    print(f"시도: {level_counts['시도']}")
-    print(f"시군구: {level_counts['시군구']}")
-    print(f"동: {level_counts['동']}")
-    print(f"\nTotal population: {total_pop_sum:,.0f}")
-
-    # return the list of property records (no geometry GeoDataFrame)
-    return records
-
-def query_location_and_write_text(result_gdf):
-    """Read location_si/gu/dong from main.py, query the GeoDataFrame and write a simple text report."""
-    # Read location variables from main.py without importing it (avoid executing its code)
-    def _read_locations_from_main(root: Path):
-        main_path = root / 'main.py'
-        if not main_path.exists():
-            return None, None, None
-        try:
-            import ast
-            src = main_path.read_text(encoding='utf-8')
-            tree = ast.parse(src)
-            vals = {}
-            for node in tree.body:
-                if isinstance(node, ast.Assign):
-                    for target in node.targets:
-                        if isinstance(target, ast.Name) and target.id in ('location_si', 'location_gu', 'location_dong'):
-                            try:
-                                vals[target.id] = ast.literal_eval(node.value)
-                            except Exception:
-                                try:
-                                    if hasattr(node.value, 's'):
-                                        vals[target.id] = node.value.s
-                                    elif hasattr(node.value, 'value'):
-                                        vals[target.id] = node.value.value
-                                    else:
-                                        vals[target.id] = None
-                                except Exception:
-                                    vals[target.id] = None
-            return vals.get('location_si'), vals.get('location_gu'), vals.get('location_dong')
-        except Exception:
-            return None, None, None
-
-    location_si, location_gu, location_dong = _read_locations_from_main(Path(__file__).resolve().parents[0])
-    # result_gdf is a list of property dicts (records)
-    records = result_gdf if isinstance(result_gdf, list) else list(result_gdf)
-
+    # Write a simple text report filtered by requested location parts (from main.py).
+    # This small TXT file is handy for quickly checking the values for the
+    # requested location without opening the full CSV/GeoJSON.
     def contains_ignore_case(hay, needle):
         try:
             return needle.lower() in hay.lower()
         except Exception:
             return False
 
-    matched = []
+    matched_for_query = []
     for rec in records:
         name = str(rec.get('area_name', ''))
         ok = True
@@ -301,16 +238,15 @@ def query_location_and_write_text(result_gdf):
         if location_dong and not contains_ignore_case(name, str(location_dong)):
             ok = False
         if ok:
-            matched.append(rec)
+            matched_for_query.append(rec)
 
     out_lines = []
     out_lines.append(f"Querying for: {location_si} / {location_gu} / {location_dong}")
-    if not matched:
+    if not matched_for_query:
         out_lines.append("No matching feature found in GeoJSON for requested location")
     else:
-        out_lines.append(f"Found {len(matched)} matching feature(s). Showing first:")
-        row = matched[0]
-        # write requested fields
+        out_lines.append(f"Found {len(matched_for_query)} matching feature(s). Showing first:")
+        row = matched_for_query[0]
         out_lines.append(f"administrative_level: {row.get('administrative_level')}")
         out_lines.append(f"area_code: {row.get('area_code')}")
         out_lines.append(f"area_name: {row.get('area_name')}")
@@ -324,16 +260,24 @@ def query_location_and_write_text(result_gdf):
         out_lines.append(f"total_population_male: {row.get('total_population_male')}")
         out_lines.append(f"total_population_female: {row.get('total_population_female')}")
 
-    out_path = Path(__file__).resolve().parents[0] / 'Location_Population_Data' / 'location_query_result.txt'
+    out_path = repo_root / 'Location_Population_Data' / 'location_query_result.txt'
     out_path.parent.mkdir(parents=True, exist_ok=True)
     with open(out_path, 'w', encoding='utf-8') as fh:
         fh.write('\n'.join(out_lines))
 
+    # summary statistics print
+    print("\n=== Summary Statistics ===")
+    total_pop_sum = sum(int(rec.get('total_population', 0) or 0) for rec in records)
+    print(f"Features produced: {len(records)}")
+    print(f"Total population: {total_pop_sum:,.0f}")
+
+    print(f"Wrote GeoJSON to: {out_geojson}")
     print(f"Wrote query result to: {out_path}")
+
+    return records
 
 
 if __name__ == '__main__':
-    print('Generating GeoJSON (will create or overwrite Location_Population_Data/combined_locations_population.geojson)')
-    gdf = generate_geojson_from_csv_and_shapefiles()
-    query_location_and_write_text(gdf)
+    print('Processing CSV and creating GeoJSON + TXT (single pass)')
+    process_csv_and_write_outputs()
     print('\n✓ Processing complete!')

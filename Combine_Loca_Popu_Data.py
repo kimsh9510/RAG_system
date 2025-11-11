@@ -1,5 +1,21 @@
 ﻿"""
-Combine location metadata with statistical population CSVs.
+Combine_Loca_Popu_Data.py
+
+High-level purpose (beginner-friendly):
+- Read a locations CSV (one administrative level) and a set of statistical CSVs
+    (or a folder of CSVs). Normalize the stats into a tidy table, pivot stat items
+    into columns, and merge them with the location table to produce a single
+    combined CSV keyed by administrative area code.
+
+Key behaviors:
+- Tries multiple encodings when reading CSV files because sources may use
+    different encodings (UTF-8, cp949/EUC-KR, etc.).
+- Uses fuzzy column detection for common Korean/English headers such as
+    행정구역코드 / area_code, 통계항목 / stat_item, 통계값 / stat_value.
+- When possible, calls `Process_Population_Data.main()` to generate a
+    combined population file before merging.
+
+The script focuses on readability and helpful errors for newcomers.
 """
 from pathlib import Path
 import argparse
@@ -8,11 +24,9 @@ from typing import Optional, List, Any
 import pandas as pd
 
 def _read_csv_with_encodings(path: Path, **kwargs):
-    """Try reading CSV with several encodings and return the dataframe and used encoding.
-
-    kwargs are passed to pd.read_csv.
-    Raises the last exception if none of the encodings worked.
-    """
+    # Try several likely encodings and return the DataFrame and successful
+    # encoding. If none of the encodings work, raise the last exception so
+    # callers get a useful error message.
     encodings = ["utf-8-sig", "utf-8", "cp949", "euc-kr", "latin1"]
     last_exc = None
     for enc in encodings:
@@ -24,25 +38,27 @@ def _read_csv_with_encodings(path: Path, **kwargs):
             # try next encoding
             continue
         except Exception as e:
-            # for other read errors (like parser errors) bubble up
+            # for other read errors (like parser errors) remember the error
+            # and still try the next encoding on the chance it was encoding.
             last_exc = e
-            # but still try next encoding in case encoding was the issue
             continue
-    # If we reach here, none of the encodings worked
+    # If we reach here, none of the encodings worked; raise the last error.
     raise last_exc if last_exc is not None else UnicodeDecodeError("utf-8", b"", 0, 1, "unknown encoding error")
 
 
 def _find_col(df, candidates: List[str]) -> Optional[str]:
+    # Fuzzy-find a column name from a list of candidate strings.
     if df is None:
         return None
     cols = {c.strip().lower(): c for c in df.columns}
+    # 1) exact (case-insensitive) match
     for cand in candidates:
         if not cand:
             continue
         lc = cand.strip().lower()
         if lc in cols:
             return cols[lc]
-    # contains
+    # 2) substring match
     for cand in candidates:
         if not cand:
             continue
@@ -58,6 +74,7 @@ def read_stats(stats_path: Path) -> Any:
 
     Returns a DataFrame with normalized columns: ['year','area_code','stat_item','stat_value']
     """
+    # Accept either a single CSV file or a directory containing many CSVs.
     if stats_path.is_dir():
         files = sorted(stats_path.glob("*.csv"))
         if not files:
@@ -76,7 +93,7 @@ def read_stats(stats_path: Path) -> Any:
         except Exception as e:
             raise RuntimeError(f"Failed to read stats CSV {stats_path}: {e}")
 
-    # detect relevant columns
+    # detect relevant columns using fuzzy matching for common headers
     year_col = _find_col(stats, ["기준년도", "year", "년도"])
     code_col = _find_col(stats, ["행정구역코드", "area_code", "지역코드", "code"])
     item_col = _find_col(stats, ["통계항목", "stat_item", "item", "통계항목명"])
@@ -85,13 +102,14 @@ def read_stats(stats_path: Path) -> Any:
     if code_col is None or item_col is None or value_col is None:
         raise ValueError("Could not find required columns in stats CSVs. Need columns like 행정구역코드, 통계항목, 통계값")
 
+    # Build a normalized output table with clear column names.
     out = pd.DataFrame()
     out['year'] = stats[year_col] if year_col in stats.columns else None
     out['area_code'] = stats[code_col]
     out['stat_item'] = stats[item_col]
     out['stat_value'] = stats[value_col]
 
-    # clean whitespace
+    # Trim whitespace to avoid spurious mismatches later.
     out['area_code'] = out['area_code'].astype(str).str.strip()
     out['stat_item'] = out['stat_item'].astype(str).str.strip()
     out['stat_value'] = out['stat_value'].astype(str).str.strip()
@@ -100,14 +118,17 @@ def read_stats(stats_path: Path) -> Any:
 
 
 def pivot_stats(stats_df: Any) -> Any:
-    # Pivot stat_item into columns; if multiple years or duplicate items exist, keep first non-empty
+    # Pivot stat_item into columns; if multiple years or duplicate items exist,
+    # pick the first non-empty value. This keeps the pivot simple and predictable.
     stats_df = stats_df.copy()
-    # If there is a year column with multiple years, prefer the latest year per item if available.
-    # For now we'll ignore year during pivot; users can filter by year beforehand if needed.
-
-    pivot = stats_df.pivot_table(index='area_code', columns='stat_item', values='stat_value', aggfunc=lambda x: next((v for v in x if str(v).strip() != ''), None))
+    pivot = stats_df.pivot_table(
+        index='area_code',
+        columns='stat_item',
+        values='stat_value',
+        aggfunc=lambda x: next((v for v in x if str(v).strip() != ''), None)
+    )
     pivot = pivot.reset_index()
-    # flatten MultiIndex columns if any
+    # flatten MultiIndex columns if any and ensure all column names are strings
     pivot.columns.name = None
     pivot.columns = [str(c) for c in pivot.columns]
     return pivot
