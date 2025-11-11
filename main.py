@@ -1,12 +1,5 @@
 import sys
 import os
-# Query context variables (Option A): define these BEFORE importing build_vectorstores
-# so the geospatial loader can read them from the running main module (__main__).
-# Modify these values here as needed for your query.
-location_si = "서울특별시"
-location_gu = "노원구"
-location_dong = "중계1동"
-disaster = "침수"
 
 from langgraph.graph import StateGraph, START, END
 from knowledge_base_copy1 import build_vectorstores
@@ -19,6 +12,7 @@ from nodes import (
     retrieval_manual_node,
     retrieval_basic_node,
     retrieval_past_node,
+    GIS_Population_node,
     llm_node,
     response_node,
 )
@@ -41,6 +35,7 @@ def build_graph(disaster: str = None):
     graph.add_node("retrieval_law", retrieval_law_node(vectordb_law))
     graph.add_node("retrieval_manual", retrieval_manual_node(vectordb_manual))
     graph.add_node("retrieval_basic", retrieval_basic_node(vectordb_basic))
+    graph.add_node("retrieval_population", GIS_Population_node())
     graph.add_node("retrieval_past", retrieval_past_node(vectordb_past))
     graph.add_node("llm", llm_node(llm))
     graph.add_node("response", response_node)
@@ -49,10 +44,12 @@ def build_graph(disaster: str = None):
     graph.add_edge(START, "retrieval_law")
     graph.add_edge(START, "retrieval_manual")
     graph.add_edge(START, "retrieval_basic")
+    graph.add_edge(START, "retrieval_population")
     graph.add_edge(START, "retrieval_past")
     graph.add_edge("retrieval_law", "llm")
     graph.add_edge("retrieval_manual", "llm")
     graph.add_edge("retrieval_basic", "llm")
+    graph.add_edge("retrieval_population", "llm")
     graph.add_edge("retrieval_past", "llm")
     graph.add_edge("llm", "response")
     graph.add_edge("response", END)
@@ -74,12 +71,11 @@ def build_graph(disaster: str = None):
 
 
 if __name__ == "__main__":
-    # Example usage: pick a disaster and location and run the graph
-    disaster = "침수"
     location_si = "서울특별시"
     location_gu = "노원구"
     location_dong = "중계1동"
-
+    disaster = "침수"
+    
     app = build_graph(disaster)
     result = app.invoke({
         "query": f"{disaster} 발생 시 파생될 수 있는 재난 유형과 대응 매뉴얼",
