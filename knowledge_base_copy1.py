@@ -13,6 +13,8 @@ import xml.etree.ElementTree as ET #hwxp
 import pandas as pd
 import re
 import json
+import subprocess
+import sys
 
 def load_all_documents_to_list(directory_path):
     documents = []
@@ -21,6 +23,21 @@ def load_all_documents_to_list(directory_path):
     if os.path.isfile(directory_path):
         file_path = directory_path
         try:
+            # If this is the generated GIS population geojson, run the generator
+            # script first so the file is up-to-date for the current query.
+            if os.path.basename(file_path) == "location_query_result.geojson":
+                try:
+                    script_path = os.path.join(os.path.dirname(__file__), "Process_GIS_Data.py")
+                    # run with the same python interpreter; don't fail the whole process if script errors
+                    proc = subprocess.run([sys.executable, script_path], capture_output=True, text=True, check=False)
+                    if proc.returncode != 0:
+                        print(f"Process_GIS_Data.py exited with code {proc.returncode}. stderr:\n{proc.stderr}")
+                    else:
+                        # optional debug output
+                        print("Process_GIS_Data.py ran successfully. stdout:", proc.stdout)
+                except Exception as e:
+                    print(f"Failed to run Process_GIS_Data.py: {e}")
+
             # Special-case GeoJSON: convert each feature to a short Document summary
             if file_path.endswith('.geojson'):
                 with open(file_path, 'r', encoding='utf-8') as f:
@@ -178,8 +195,7 @@ def build_vectorstores():
     manual_docs = load_all_documents_to_list("Dataset/매뉴얼")
     basic_docs = load_all_documents_to_list("Dataset/기본데이터")
     past_docs = load_all_documents_to_list("Dataset/과거재난데이터")
-    pop_docs = load_all_documents_to_list("Location_Population_Data/combined_locations_population.geojson")
-    # -----------------------------------------------------------------------------
+    pop_docs = load_all_documents_to_list("Location_Population_Data/location_query_result.geojson")
 
     #law_docs, manual_docs = load_all_documents_to_list("Dataset_for_test/과거재난데이터"), load_all_documents_to_list("Dataset_for_test/매뉴얼")
     splitter = CharacterTextSplitter(chunk_size=200, chunk_overlap=0)
