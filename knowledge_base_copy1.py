@@ -15,9 +15,46 @@ import re
 import json
 
 def load_all_documents_to_list(directory_path):
+    documents = []
+
+    # If caller passed a single file (e.g., a .geojson), handle it directly.
+    if os.path.isfile(directory_path):
+        file_path = directory_path
+        try:
+            # Special-case GeoJSON: convert each feature to a short Document summary
+            if file_path.endswith('.geojson'):
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    gj = json.load(f)
+                features = gj.get('features', []) if isinstance(gj, dict) else []
+                for i, feat in enumerate(features):
+                    props = feat.get('properties', {}) if isinstance(feat, dict) else {}
+                    name = props.get('name') or props.get('dong') or props.get('ADM_NM') or props.get('ADM_NM_ENG') or props.get('장소')
+                    pop_fields = []
+                    for k in ('population','total_pop','총인구','POPULATION','TOTPOP'):
+                        if k in props:
+                            pop_fields.append(f"{k}: {props[k]}")
+                    geom = feat.get('geometry') if isinstance(feat, dict) else None
+                    coord_str = ''
+                    if geom and 'coordinates' in geom:
+                        coord_str = str(geom['coordinates'])
+
+                    summary_parts = []
+                    if name:
+                        summary_parts.append(f"name: {name}")
+                    if pop_fields:
+                        summary_parts.append(', '.join(pop_fields))
+                    if coord_str:
+                        summary_parts.append(f"coords: {coord_str}")
+
+                    page_content = " | ".join(summary_parts) if summary_parts else str(props)
+                    documents.append(Document(page_content=page_content, metadata={"source": file_path, "feature_index": i}))
+                return documents
+            # Non-geojson single-file: fall through to normal file handling below
+        except Exception as e:
+            print(f"Error processing file {file_path}: {e}")
+            return documents
+
     all_documents = glob.glob(os.path.join(directory_path,"*"))
-    
-    documents=[]
 
     for file_path in all_documents:
         try:
@@ -113,6 +150,7 @@ def load_all_documents_to_list(directory_path):
     #print(documents)
     return documents
 
+
 def parse_multiline_cell(cell_text):
     """
     "키: 값" 형태의 여러 줄 문자열을 딕셔너리로 변환
@@ -140,15 +178,7 @@ def build_vectorstores():
     manual_docs = load_all_documents_to_list("Dataset/매뉴얼")
     basic_docs = load_all_documents_to_list("Dataset/기본데이터")
     past_docs = load_all_documents_to_list("Dataset/과거재난데이터")
-
-    # ---- NEW: include population GeoJSON docs into basic_docs so they get indexed ----
-    try:
-        pop_docs = load_population_geojson("Location_Population_Data/combined_locations_population.geojson")
-        if pop_docs:
-            basic_docs.extend(pop_docs)
-    except Exception as _e:
-        # non-fatal: continue if geojson not present or cannot be parsed
-        print(f"Warning: could not load population geojson: {_e}")
+    pop_docs = load_all_documents_to_list("Location_Population_Data/combined_locations_population.geojson")
     # -----------------------------------------------------------------------------
 
     #law_docs, manual_docs = load_all_documents_to_list("Dataset_for_test/과거재난데이터"), load_all_documents_to_list("Dataset_for_test/매뉴얼")
@@ -159,6 +189,7 @@ def build_vectorstores():
     law_blackout_splits = splitter.split_documents(law_blackout_docs)
     manual_splits = splitter.split_documents(manual_docs)
     basic_splits = splitter.split_documents(basic_docs)
+    pop_splits = splitter.split_documents(pop_docs)
     past_splits = splitter.split_documents(past_docs)
 
     embeddings = load_embeddings()
@@ -168,49 +199,16 @@ def build_vectorstores():
     vectordb_blackout_law = FAISS.from_documents(law_blackout_splits, embeddings)
     vectordb_manual = FAISS.from_documents(manual_splits, embeddings)
     vectordb_basic = FAISS.from_documents(basic_splits, embeddings)
+    vectordb_population = FAISS.from_documents(pop_splits, embeddings)
     vectordb_past = FAISS.from_documents(past_splits, embeddings)
 
-    return vectordb_law, vectordb_flooding_law, vectordb_blackout_law, vectordb_manual, vectordb_basic, vectordb_past
-
-
-def load_population_geojson(geojson_path="Location_Population_Data/combined_locations_population.geojson"):
-    documents = []
-    try:
-        with open(geojson_path, 'r', encoding='utf-8') as f:
-            gj = json.load(f)
-
-        features = gj.get('features', []) if isinstance(gj, dict) else []
-        for i, feat in enumerate(features):
-            props = feat.get('properties', {}) if isinstance(feat, dict) else {}
-            # try to extract a display name from common fields
-            name = props.get('name') or props.get('dong') or props.get('ADM_NM') or props.get('ADM_NM_ENG') or props.get('장소')
-            # basic population fields that might exist
-            pop_fields = []
-            for k in ('population','total_pop','총인구','POPULATION','TOTPOP'):
-                if k in props:
-                    pop_fields.append(f"{k}: {props[k]}")
-
-            # format coordinates if present
-            geom = feat.get('geometry') if isinstance(feat, dict) else None
-            coord_str = ''
-            if geom and 'coordinates' in geom:
-                coord_str = str(geom['coordinates'])
-
-            summary_parts = []
-            if name:
-                summary_parts.append(f"name: {name}")
-            if pop_fields:
-                summary_parts.append(', '.join(pop_fields))
-            if coord_str:
-                summary_parts.append(f"coords: {coord_str}")
-
-            page_content = " | ".join(summary_parts) if summary_parts else str(props)
-            documents.append(Document(page_content=page_content, metadata={"source": geojson_path, "feature_index": i}))
-
-    except FileNotFoundError:
-        print(f"Population geojson not found at {geojson_path}")
-    except Exception as e:
-        print(f"Error loading population geojson: {e}")
-
-    return documents
+    return (
+        vectordb_law,
+        vectordb_flooding_law,
+        vectordb_blackout_law,
+        vectordb_manual,
+        vectordb_basic,
+        vectordb_population,
+        vectordb_past,
+    )
     

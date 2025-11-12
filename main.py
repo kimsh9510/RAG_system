@@ -12,7 +12,7 @@ from nodes import (
     retrieval_manual_node,
     retrieval_basic_node,
     retrieval_past_node,
-    GIS_Population_node,
+    retrieval_population_node,
     llm_node,
     response_node,
 )
@@ -20,7 +20,16 @@ from nodes import (
 
 # 벡터 db와 LLM모델 로드
 # Note: build_vectorstores now returns (possible None) for specialized law vectordbs
-vectordb_law, vectordb_flooding_law, vectordb_blackout_law, vectordb_manual, vectordb_basic, vectordb_past = build_vectorstores()
+# build_vectorstores now returns vectordb_population as separate element
+(
+    vectordb_law,
+    vectordb_flooding_law,
+    vectordb_blackout_law,
+    vectordb_manual,
+    vectordb_basic,
+    vectordb_population,
+    vectordb_past,
+) = build_vectorstores()
 # Use the appropriate LLM loading function from models.py
 llm = load_llama3()  # or load_solar_pro(), load_EXAONE(), load_llama3(), load_llm()
 
@@ -35,7 +44,9 @@ def build_graph(disaster: str = None):
     graph.add_node("retrieval_law", retrieval_law_node(vectordb_law))
     graph.add_node("retrieval_manual", retrieval_manual_node(vectordb_manual))
     graph.add_node("retrieval_basic", retrieval_basic_node(vectordb_basic))
-    graph.add_node("retrieval_population", GIS_Population_node())
+    # Use the vectorstore-backed retrieval node for population so it is
+    # consistent with other document collections.
+    graph.add_node("retrieval_population", retrieval_population_node(vectordb_population))
     graph.add_node("retrieval_past", retrieval_past_node(vectordb_past))
     graph.add_node("llm", llm_node(llm))
     graph.add_node("response", response_node)
