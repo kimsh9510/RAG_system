@@ -22,11 +22,10 @@ import argparse
 import sys
 from typing import Optional, List, Any
 import pandas as pd
+import subprocess
 
 def _read_csv_with_encodings(path: Path, **kwargs):
-    # Try several likely encodings and return the DataFrame and successful
-    # encoding. If none of the encodings work, raise the last exception so
-    # callers get a useful error message.
+    # Try several likely encodings and return the DataFrame
     encodings = ["utf-8-sig", "utf-8", "cp949", "euc-kr", "latin1"]
     last_exc = None
     for enc in encodings:
@@ -139,8 +138,32 @@ def main(locations_csv: Path, stats_path: Path, out_csv: Path):
         print("pandas is required. Please install it: pip install pandas", file=sys.stderr)
         sys.exit(2)
 
+    # If locations CSV is missing, try to generate it via Process_Location_Data
+    if not locations_csv.exists():
+        try:
+            import Process_Location_Data as locproc  # type: ignore
+        except Exception:
+            locproc = None
+
+        if locproc and hasattr(locproc, 'main'):
+            try:
+                print("Locations CSV missing — attempting to run Process_Location_Data.main()")
+                locproc.main()
+            except Exception as e:
+                print(f"Process_Location_Data.main() raised: {e}")
+        else:
+            # fallback: try running as a subprocess with same interpreter
+            try:
+                script = Path(__file__).resolve().parents[0] / 'Process_Location_Data.py'
+                if script.exists():
+                    print(f"Running Process_Location_Data.py to generate locations CSV: {script}")
+                    subprocess.run([sys.executable, str(script)], check=False)
+            except Exception as e:
+                print(f"Failed to invoke Process_Location_Data.py: {e}")
+
     if not locations_csv.exists():
         raise FileNotFoundError(f"Locations file not found: {locations_csv}")
+
     if not stats_path.exists():
         raise FileNotFoundError(f"Stats path not found: {stats_path}")
 
@@ -183,6 +206,50 @@ def main(locations_csv: Path, stats_path: Path, out_csv: Path):
         loc_path = Path(out_dir) / 'combined_locations.csv'
         pop_path = Path(out_dir) / 'combined_population.csv'
 
+        # If locations CSV still missing here, try Process_Location_Data again
+        if not loc_path.exists():
+            try:
+                import Process_Location_Data as locproc2  # type: ignore
+            except Exception:
+                locproc2 = None
+            if locproc2 and hasattr(locproc2, 'main'):
+                try:
+                    print("combined_locations.csv missing — attempting to run Process_Location_Data.main()")
+                    locproc2.main()
+                except Exception as e:
+                    print(f"Process_Location_Data.main() raised: {e}")
+            else:
+                script = Path(__file__).resolve().parents[0] / 'Process_Location_Data.py'
+                if script.exists():
+                    try:
+                        print(f"Running Process_Location_Data.py subprocess to generate {loc_path}")
+                        subprocess.run([sys.executable, str(script)], check=False)
+                    except Exception as e:
+                        print(f"Failed to run Process_Location_Data.py: {e}")
+
+        # If population CSV missing, attempt Process_Population_Data
+        if not pop_path.exists():
+            try:
+                import Process_Population_Data as popproc2  # type: ignore
+            except Exception:
+                popproc2 = None
+            if popproc2 and hasattr(popproc2, 'main'):
+                try:
+                    print("combined_population.csv missing — attempting to run Process_Population_Data.main()")
+                    # use default stats dir if available
+                    default_stats = Path(__file__).resolve().parents[0] / 'Dataset' / '경계' / '경계' / '통계청_SGIS 행정구역 통계 및 경계_20240630' / '1. 통계' / '1. 2023년 행정구역 통계(인구)'
+                    popproc2.main(default_stats, pop_path)
+                except Exception as e:
+                    print(f"Process_Population_Data.main() raised: {e}")
+            else:
+                script = Path(__file__).resolve().parents[0] / 'Process_Population_Data.py'
+                if script.exists():
+                    try:
+                        print(f"Running Process_Population_Data.py subprocess to generate {pop_path}")
+                        subprocess.run([sys.executable, str(script), "--stats-dir", str(stats_path), "--out", str(pop_path)], check=False)
+                    except Exception as e:
+                        print(f"Failed to run Process_Population_Data.py: {e}")
+
         if not loc_path.exists():
             raise FileNotFoundError(f"Locations CSV not found: {loc_path}")
         if not pop_path.exists():
@@ -206,7 +273,7 @@ def main(locations_csv: Path, stats_path: Path, out_csv: Path):
         # ensure area_code column exists in both; try common alternatives
         def find_area_col(df):
             for c in df.columns:
-                if str(c).strip().lower() in ('area_code', '지역코드', 'adm_cd', 'adm_cd'):
+                if str(c).strip().lower() in ('area_code', '지역코드', 'adm_cd'):
                     return c
             # try contains
             for c in df.columns:
@@ -229,34 +296,6 @@ def main(locations_csv: Path, stats_path: Path, out_csv: Path):
         print(f"Wrote merged dataset to: {merged_out}")
     except Exception as e:
         print(f"Error during merge: {e}")
-
-    # canonical area code column in locations
-    area_col = None
-    for cand in ["area_code", "area_code", "area_code", "area_code", "area_code", "area_code", "area_code", "area_code", 'area_code']:
-        if cand in loc.columns:
-            area_col = cand
-            break
-    # try fuzzy match for Korean name
-    if area_col is None:
-        candidates = ["area_code", "지역코드", "area code", "area.code", "area.code"]
-        area_col = _find_col(loc, candidates)
-
-    if area_col is None:
-        raise ValueError("Could not determine area code column in locations CSV (expected 'area_code' or '지역코드').")
-
-    loc['area_code'] = loc[area_col].astype(str).str.strip()
-
-    # Read stats and pivot
-    stats = read_stats(stats_path)
-    stats_wide = pivot_stats(stats)
-
-    # Merge
-    merged = loc.merge(stats_wide, how='left', on='area_code')
-
-    # Write output
-    out_csv.parent.mkdir(parents=True, exist_ok=True)
-    merged.to_csv(out_csv, index=False, encoding='utf-8-sig')
-    print(f"Wrote combined file to: {out_csv}")
 
 
 if __name__ == '__main__':

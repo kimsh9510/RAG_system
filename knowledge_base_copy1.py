@@ -1,5 +1,7 @@
 #벡터 DB구축 - > 지식그래프 DB로 변경 예정
 from PyPDF2 import PdfReader
+import subprocess
+import sys
 import pdfplumber
 from langchain.schema import Document
 from langchain.text_splitter import CharacterTextSplitter
@@ -16,60 +18,55 @@ import json
 import subprocess
 import sys
 
+def _load_geojson_as_docs(file_path: str):
+    """
+    Load a .geojson file and convert each Feature's properties into a LangChain Document.
+    Automatically runs Process_GIS_Data.py first if the file does not yet exist.
+    """
+    # 1️⃣ Run Process_GIS_Data.py if geojson file doesn't exist
+    if not os.path.exists(file_path) and file_path.lower().endswith('.geojson'):
+        try:
+            script_path = os.path.join(os.path.dirname(__file__), "Process_GIS_Data.py")
+            if os.path.exists(script_path):
+                print(f"Requested geojson is missing. Running generator: {script_path}")
+                proc = subprocess.run([sys.executable, script_path],
+                                      capture_output=True, text=True, check=False)
+                if proc.returncode != 0:
+                    print(f"Process_GIS_Data.py exited with code {proc.returncode}. stderr:\n{proc.stderr}")
+                else:
+                    print("Process_GIS_Data.py ran successfully. stdout:", proc.stdout)
+            else:
+                print(f"Generator script not found at: {script_path}")
+        except Exception as e:
+            print(f"Failed to run Process_GIS_Data.py: {e}")
+
+    # 2️⃣ After generation attempt, check again
+    if not os.path.exists(file_path):
+        print(f"[ERROR] GeoJSON file still missing after generation attempt: {file_path}")
+        return []
+
+    # 3️⃣ Parse GeoJSON features into Documents
+    documents = []
+    try:
+        with open(file_path, 'r', encoding='utf-8') as f:
+            gj = json.load(f)
+        features = gj.get('features', []) if isinstance(gj, dict) else []
+        for i, feat in enumerate(features):
+            props = feat.get('properties', {}) if isinstance(feat, dict) else {}
+            page_content = json.dumps(props, ensure_ascii=False)
+            documents.append(
+                Document(
+                    page_content=page_content,
+                    metadata={"source": file_path, "feature_index": i}
+                )
+            )
+    except Exception as e:
+        print(f"Error loading GeoJSON file {file_path}: {e}")
+    return documents
+
+
 def load_all_documents_to_list(directory_path):
     documents = []
-
-    # If caller passed a single file (e.g., a .geojson), handle it directly.
-    if os.path.isfile(directory_path):
-        file_path = directory_path
-        try:
-            # If this is the generated GIS population geojson, run the generator
-            # script first so the file is up-to-date for the current query.
-            if os.path.basename(file_path) == "location_query_result.geojson":
-                try:
-                    script_path = os.path.join(os.path.dirname(__file__), "Process_GIS_Data.py")
-                    # run with the same python interpreter; don't fail the whole process if script errors
-                    proc = subprocess.run([sys.executable, script_path], capture_output=True, text=True, check=False)
-                    if proc.returncode != 0:
-                        print(f"Process_GIS_Data.py exited with code {proc.returncode}. stderr:\n{proc.stderr}")
-                    else:
-                        # optional debug output
-                        print("Process_GIS_Data.py ran successfully. stdout:", proc.stdout)
-                except Exception as e:
-                    print(f"Failed to run Process_GIS_Data.py: {e}")
-
-            # Special-case GeoJSON: convert each feature to a short Document summary
-            if file_path.endswith('.geojson'):
-                with open(file_path, 'r', encoding='utf-8') as f:
-                    gj = json.load(f)
-                features = gj.get('features', []) if isinstance(gj, dict) else []
-                for i, feat in enumerate(features):
-                    props = feat.get('properties', {}) if isinstance(feat, dict) else {}
-                    name = props.get('name') or props.get('dong') or props.get('ADM_NM') or props.get('ADM_NM_ENG') or props.get('장소')
-                    pop_fields = []
-                    for k in ('population','total_pop','총인구','POPULATION','TOTPOP'):
-                        if k in props:
-                            pop_fields.append(f"{k}: {props[k]}")
-                    geom = feat.get('geometry') if isinstance(feat, dict) else None
-                    coord_str = ''
-                    if geom and 'coordinates' in geom:
-                        coord_str = str(geom['coordinates'])
-
-                    summary_parts = []
-                    if name:
-                        summary_parts.append(f"name: {name}")
-                    if pop_fields:
-                        summary_parts.append(', '.join(pop_fields))
-                    if coord_str:
-                        summary_parts.append(f"coords: {coord_str}")
-
-                    page_content = " | ".join(summary_parts) if summary_parts else str(props)
-                    documents.append(Document(page_content=page_content, metadata={"source": file_path, "feature_index": i}))
-                return documents
-            # Non-geojson single-file: fall through to normal file handling below
-        except Exception as e:
-            print(f"Error processing file {file_path}: {e}")
-            return documents
 
     all_documents = glob.glob(os.path.join(directory_path,"*"))
 
@@ -195,7 +192,7 @@ def build_vectorstores():
     manual_docs = load_all_documents_to_list("Dataset/매뉴얼")
     basic_docs = load_all_documents_to_list("Dataset/기본데이터")
     past_docs = load_all_documents_to_list("Dataset/과거재난데이터")
-    pop_docs = load_all_documents_to_list("Location_Population_Data/location_query_result.geojson")
+    pop_docs = _load_geojson_as_docs("Location_Population_Data/location_query_result.geojson")
 
     #law_docs, manual_docs = load_all_documents_to_list("Dataset_for_test/과거재난데이터"), load_all_documents_to_list("Dataset_for_test/매뉴얼")
     splitter = CharacterTextSplitter(chunk_size=200, chunk_overlap=0)
@@ -227,4 +224,3 @@ def build_vectorstores():
         vectordb_population,
         vectordb_past,
     )
-    
