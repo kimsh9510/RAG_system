@@ -21,14 +21,15 @@ import sys
 def _load_geojson_as_docs(file_path: str):
     """
     Load a .geojson file and convert each Feature's properties into a LangChain Document.
-    Automatically runs Process_GIS_Data.py first if the file does not yet exist.
+    Always runs Process_GIS_Data.py when a .geojson path is requested (to regenerate data).
     """
-    # 1️⃣ Run Process_GIS_Data.py if geojson file doesn't exist
-    if not os.path.exists(file_path) and file_path.lower().endswith('.geojson'):
+    # If the caller requested a geojson file, run the generator unconditionally so
+    # the latest location query output is produced.
+    if file_path.lower().endswith('.geojson'):
         try:
             script_path = os.path.join(os.path.dirname(__file__), "Process_GIS_Data.py")
             if os.path.exists(script_path):
-                print(f"Requested geojson is missing. Running generator: {script_path}")
+                print(f"Running generator for requested geojson: {script_path}")
                 proc = subprocess.run([sys.executable, script_path],
                                       capture_output=True, text=True, check=False)
                 if proc.returncode != 0:
@@ -40,12 +41,12 @@ def _load_geojson_as_docs(file_path: str):
         except Exception as e:
             print(f"Failed to run Process_GIS_Data.py: {e}")
 
-    # 2️⃣ After generation attempt, check again
+    # After attempting generation, ensure the geojson exists
     if not os.path.exists(file_path):
         print(f"[ERROR] GeoJSON file still missing after generation attempt: {file_path}")
         return []
 
-    # 3️⃣ Parse GeoJSON features into Documents
+    # Parse GeoJSON features into Documents
     documents = []
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
@@ -63,7 +64,6 @@ def _load_geojson_as_docs(file_path: str):
     except Exception as e:
         print(f"Error loading GeoJSON file {file_path}: {e}")
     return documents
-
 
 def load_all_documents_to_list(directory_path):
     documents = []

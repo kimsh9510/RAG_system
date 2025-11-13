@@ -83,8 +83,8 @@ def build_graph(disaster: str = None):
 
 if __name__ == "__main__":
     location_si = "서울특별시"
-    location_gu = "노원구"
-    location_dong = "중계1동"
+    location_gu = "서초구"
+    location_dong = "서초3동"
     disaster = "침수"
     
     app = build_graph(disaster)
