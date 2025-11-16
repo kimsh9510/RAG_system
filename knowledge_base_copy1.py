@@ -21,7 +21,10 @@ import sys
 def _load_geojson_as_docs(file_path: str):
     """
     Load a .geojson file and convert each Feature's properties into a LangChain Document.
-    Always runs Process_GIS_Data.py when a .geojson path is requested (to regenerate data).
+    - Top of page_content: original JSON props (unchanged).
+    - After that: [GIS_인구] 재난 위험도 분석 block.
+    - Then: si:... gu:... dong:... code:... line.
+    - No [GIS_SUMMARY] block anymore.
     """
     # If the caller requested a geojson file, run the generator unconditionally so
     # the latest location query output is produced.
@@ -30,8 +33,12 @@ def _load_geojson_as_docs(file_path: str):
             script_path = os.path.join(os.path.dirname(__file__), "Process_GIS_Data.py")
             if os.path.exists(script_path):
                 print(f"Running generator for requested geojson: {script_path}")
-                proc = subprocess.run([sys.executable, script_path],
-                                      capture_output=True, text=True, check=False)
+                proc = subprocess.run(
+                    [sys.executable, script_path],
+                    capture_output=True,
+                    text=True,
+                    check=False
+                )
                 if proc.returncode != 0:
                     print(f"Process_GIS_Data.py exited with code {proc.returncode}. stderr:\n{proc.stderr}")
                 else:
@@ -46,24 +53,201 @@ def _load_geojson_as_docs(file_path: str):
         print(f"[ERROR] GeoJSON file still missing after generation attempt: {file_path}")
         return []
 
-    # Parse GeoJSON features into Documents
+    # ----- helpers -----
+    def _safe_float(x, default=0.0):
+        try:
+            if x is None:
+                return float(default)
+            if isinstance(x, str) and x.strip() == "":
+                return float(default)
+            return float(x)
+        except Exception:
+            return float(default)
+
+    def _norm_str(x):
+        return (x or "").strip()
+
+    _BASE32 = "0123456789bcdefghjkmnpqrstuvwxyz"
+
+    def _geohash(lat, lon, precision=6):
+        # small geohash helper (optional metadata)
+        if lat == 0 and lon == 0:
+            return ""
+        lat_interval = [-90.0, 90.0]
+        lon_interval = [-180.0, 180.0]
+        bits = [16, 8, 4, 2, 1]
+        is_lon = True
+        bit = 0
+        ch = 0
+        geohash_str = []
+
+        for _ in range(precision * 5):
+            if is_lon:
+                mid = (lon_interval[0] + lon_interval[1]) / 2
+                if lon > mid:
+                    ch |= bits[bit]
+                    lon_interval[0] = mid
+                else:
+                    lon_interval[1] = mid
+            else:
+                mid = (lat_interval[0] + lat_interval[1]) / 2
+                if lat > mid:
+                    ch |= bits[bit]
+                    lat_interval[0] = mid
+                else:
+                    lat_interval[1] = mid
+            is_lon = not is_lon
+            bit += 1
+            if bit == 5:
+                geohash_str.append(_BASE32[ch])
+                bit = 0
+                ch = 0
+
+        return "".join(geohash_str)
+
+    # ----- Parse GeoJSON features into Documents -----
     documents = []
     try:
         with open(file_path, 'r', encoding='utf-8') as f:
             gj = json.load(f)
         features = gj.get('features', []) if isinstance(gj, dict) else []
+
         for i, feat in enumerate(features):
             props = feat.get('properties', {}) if isinstance(feat, dict) else {}
-            page_content = json.dumps(props, ensure_ascii=False)
+
+            # 1) ORIGINAL TOP OUTPUT (keep values exactly as they are)
+            #    If upstream already makes it a list, props will already have that structure.
+            base_content = json.dumps(props, ensure_ascii=False)
+
+            # 2) Extract fields used for GIS_인구 + si/gu/dong line
+            si_name   = _norm_str(
+                props.get("city_name")
+                or props.get("si")
+                or props.get("location_si")
+            )
+            gu_name   = _norm_str(
+                props.get("district_name")
+                or props.get("gu")
+                or props.get("location_gu")
+            )
+            dong_name = _norm_str(
+                props.get("area_name")
+                or props.get("dong")
+                or props.get("location_dong")
+            )
+
+            si_code   = _norm_str(props.get("city_code") or props.get("si_code"))
+            gu_code   = _norm_str(props.get("district_code") or props.get("gu_code"))
+            area_code = _norm_str(
+                props.get("area_code")
+                or props.get("dong_code")
+                or props.get("code")
+            )
+
+            population     = _safe_float(props.get("total_population"), 0)
+            density        = _safe_float(props.get("population_density"), 0)
+            elderly_index  = _safe_float(
+                props.get("elderly_index") or props.get("aging_index"), 0
+            )
+            avg_age        = _safe_float(props.get("average_age"), 0)
+            area_sqkm      = _safe_float(props.get("area_sqkm"), 0)
+            centroid_lat   = _safe_float(props.get("centroid_lat"), 0)
+            centroid_lon   = _safe_float(props.get("centroid_lon"), 0)
+
+            # Risk labels (same logic as before)
+            if density > 15000:
+                density_risk = "매우 높음"
+            elif density > 10000:
+                density_risk = "높음"
+            elif density > 5000:
+                density_risk = "중간"
+            else:
+                density_risk = "낮음"
+
+            if population > 500000:
+                pop_risk = "대규모"
+            elif population > 100000:
+                pop_risk = "중규모"
+            elif population > 10000:
+                pop_risk = "소규모"
+            else:
+                pop_risk = "미소규모"
+
+            elderly_concern = "예" if elderly_index > 100 else "아니오"
+
+            # 대피 난이도 (예시: 밀도 기반)
+            if density > 15000:
+                evacuation_difficulty = "장시간 소요 (고밀도)"
+            elif density > 10000:
+                evacuation_difficulty = "중간 (중밀도)"
+            else:
+                evacuation_difficulty = "짧음 (저밀도)"
+
+            # si / gu / dong / code line (explicitly using the variables)
+            admin_tokens = (
+                f"si:{si_name} gu:{gu_name} dong:{dong_name} "
+                f"code:{area_code or gu_code or si_code}"
+            )
+
+            # 3) [GIS_인구] block (goes directly AFTER the top JSON)
+            gis_in_gu_block = (
+                "\n\n[GIS_인구]\n"
+                "재난 위험도 분석:\n"
+                f"- 인구밀도 위험도: {density_risk}\n"
+                f"- 인구 규모: {pop_risk}\n"
+                f"- 고령 인구 관리 필요: {elderly_concern}\n"
+                f"- 예상 대피 난이도: {evacuation_difficulty}\n"
+            )
+
+            # 4) FINAL page_content:
+            #    top  : original JSON props (unchanged)
+            #    after: [GIS_인구] block
+            #    last : si:... gu:... dong:... code:...
+            full_page_content = (
+                base_content
+                + gis_in_gu_block
+                + "\n"
+                + admin_tokens
+            )
+
+            # 5) metadata: keep old keys, just add extras
+            geoh = _geohash(centroid_lat, centroid_lon, precision=6)
+
+            metadata = {
+                "source": file_path,
+                "feature_index": i,
+                "si_name": si_name,
+                "gu_name": gu_name,
+                "dong_name": dong_name,
+                "si_code": si_code,
+                "gu_code": gu_code,
+                "area_code": area_code,
+                "population": int(population),
+                "population_density": density,
+                "average_age": avg_age,
+                "elderly_index": elderly_index,
+                "area_sqkm": area_sqkm,
+                "centroid_lat": centroid_lat,
+                "centroid_lon": centroid_lon,
+                "geohash": geoh,
+                "density_risk": density_risk,
+                "pop_risk": pop_risk,
+                "elderly_concern": elderly_concern,
+                "evacuation_difficulty": evacuation_difficulty,
+            }
+
             documents.append(
                 Document(
-                    page_content=page_content,
-                    metadata={"source": file_path, "feature_index": i}
+                    page_content=full_page_content,
+                    metadata=metadata
                 )
             )
+
     except Exception as e:
         print(f"Error loading GeoJSON file {file_path}: {e}")
+
     return documents
+
 
 def load_all_documents_to_list(directory_path):
     documents = []
