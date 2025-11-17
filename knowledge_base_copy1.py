@@ -21,10 +21,9 @@ import sys
 def _load_geojson_as_docs(file_path: str):
     """
     Load a .geojson file and convert each Feature's properties into a LangChain Document.
-    - Top of page_content: original JSON props (unchanged).
-    - After that: [GIS_인구] 재난 위험도 분석 block.
-    - Then: si:... gu:... dong:... code:... line.
-    - No [GIS_SUMMARY] block anymore.
+    - page_content: a single JSON object that contains
+        * the original properties from GeoJSON
+        * additional GIS_인구 risk fields
     """
     # If the caller requested a geojson file, run the generator unconditionally so
     # the latest location query output is produced.
@@ -54,6 +53,7 @@ def _load_geojson_as_docs(file_path: str):
         return []
 
     # ----- helpers -----
+    # Safely turn any value into a float without crashing.
     def _safe_float(x, default=0.0):
         try:
             if x is None:
@@ -64,11 +64,16 @@ def _load_geojson_as_docs(file_path: str):
         except Exception:
             return float(default)
 
+    # Safely convert a value to a clean string.
     def _norm_str(x):
         return (x or "").strip()
-
+    
+    # A set of 32 characters used for geohash encoding.
     _BASE32 = "0123456789bcdefghjkmnpqrstuvwxyz"
 
+    # Simple geohash implementation turning (lat, lon) 
+    # into a short string like "wydmre" that roughly 
+    # represents the location.
     def _geohash(lat, lon, precision=6):
         # small geohash helper (optional metadata)
         if lat == 0 and lon == 0:
@@ -112,14 +117,11 @@ def _load_geojson_as_docs(file_path: str):
             gj = json.load(f)
         features = gj.get('features', []) if isinstance(gj, dict) else []
 
+        # Loop over each feature and build Documents (props dictionary)
         for i, feat in enumerate(features):
             props = feat.get('properties', {}) if isinstance(feat, dict) else {}
 
-            # 1) ORIGINAL TOP OUTPUT (keep values exactly as they are)
-            #    If upstream already makes it a list, props will already have that structure.
-            base_content = json.dumps(props, ensure_ascii=False)
-
-            # 2) Extract fields used for GIS_인구 + si/gu/dong line
+            # 1) Extract si / gu / dong names and codes
             si_name   = _norm_str(
                 props.get("city_name")
                 or props.get("si")
@@ -143,7 +145,8 @@ def _load_geojson_as_docs(file_path: str):
                 or props.get("dong_code")
                 or props.get("code")
             )
-
+            
+            # 2) Extract numeric fields (population, density, etc.)
             population     = _safe_float(props.get("total_population"), 0)
             density        = _safe_float(props.get("population_density"), 0)
             elderly_index  = _safe_float(
@@ -154,7 +157,8 @@ def _load_geojson_as_docs(file_path: str):
             centroid_lat   = _safe_float(props.get("centroid_lat"), 0)
             centroid_lon   = _safe_float(props.get("centroid_lon"), 0)
 
-            # Risk labels (same logic as before)
+            # 3) Calculate risk labels from numbers
+            # Density Risk (인구밀도 위험도)       
             if density > 15000:
                 density_risk = "매우 높음"
             elif density > 10000:
@@ -163,7 +167,8 @@ def _load_geojson_as_docs(file_path: str):
                 density_risk = "중간"
             else:
                 density_risk = "낮음"
-
+                
+            # Population scale (인구 규모)
             if population > 500000:
                 pop_risk = "대규모"
             elif population > 100000:
@@ -173,9 +178,10 @@ def _load_geojson_as_docs(file_path: str):
             else:
                 pop_risk = "미소규모"
 
+            # Elderly concern (고령 인구 관리 필요 여부)
             elderly_concern = "예" if elderly_index > 100 else "아니오"
 
-            # 대피 난이도 (예시: 밀도 기반)
+            # Evacuation difficulty -> 대피 난이도 (예시: 밀도 기반)
             if density > 15000:
                 evacuation_difficulty = "장시간 소요 (고밀도)"
             elif density > 10000:
@@ -183,32 +189,17 @@ def _load_geojson_as_docs(file_path: str):
             else:
                 evacuation_difficulty = "짧음 (저밀도)"
 
-            # si / gu / dong / code line (explicitly using the variables)
-            admin_tokens = (
-                f"si:{si_name} gu:{gu_name} dong:{dong_name} "
-                f"code:{area_code or gu_code or si_code}"
-            )
+            # 4) Combine original props + GIS_인구 info into ONE JSON object
+            combined_props = dict(props)  # shallow copy so we don't mutate original
 
-            # 3) [GIS_인구] block (goes directly AFTER the top JSON)
-            gis_in_gu_block = (
-                "\n\n[GIS_인구]\n"
-                "재난 위험도 분석:\n"
-                f"- 인구밀도 위험도: {density_risk}\n"
-                f"- 인구 규모: {pop_risk}\n"
-                f"- 고령 인구 관리 필요: {elderly_concern}\n"
-                f"- 예상 대피 난이도: {evacuation_difficulty}\n"
-            )
+            # Add extra GIS_인구 fields into the same JSON
+            combined_props["인구밀도_위험도"] = density_risk
+            combined_props["인구_규모"] = pop_risk
+            combined_props["고령_인구_관리_필요"] = elderly_concern
+            combined_props["예상_대피_난이도"] = evacuation_difficulty
 
-            # 4) FINAL page_content:
-            #    top  : original JSON props (unchanged)
-            #    after: [GIS_인구] block
-            #    last : si:... gu:... dong:... code:...
-            full_page_content = (
-                base_content
-                + gis_in_gu_block
-                + "\n"
-                + admin_tokens
-            )
+            # Single JSON string as page_content
+            full_page_content = json.dumps(combined_props, ensure_ascii=False, indent=2)
 
             # 5) metadata: keep old keys, just add extras
             geoh = _geohash(centroid_lat, centroid_lon, precision=6)
@@ -347,7 +338,6 @@ def load_all_documents_to_list(directory_path):
             print(f"Error processing {file_path}: {e}")
     #print(documents)
     return documents
-
 
 def parse_multiline_cell(cell_text):
     """
