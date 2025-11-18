@@ -3,11 +3,11 @@ import os
 from langgraph.graph import StateGraph, START, END
 from knowledge_base_copy1 import build_vectorstores
 from models import load_qwen, load_solar_pro, load_solar_pro2, load_llama3, load_EXAONE
-from nodes import State, retrieval_law_node, retrieval_flooding_law_node, retrieval_blackout_law_node, retrieval_manual_node, retrieval_basic_node, retrieval_past_node, llm_node, response_node
+from nodes import State, retrieval_law_node, retrieval_flooding_law_node, retrieval_blackout_law_node, retrieval_manual_node, retrieval_basic_node, retrieval_past_node, retrieval_gis_node, llm_node, response_node
 
 #벡터 db와 LLM모델 로드
-vectordb_law, vectordb_flooding_law, vectordb_blackout_law, vectordb_manual, vectordb_basic, vectordb_past = build_vectorstores()
-llm = load_qwen()
+vectordb_law, vectordb_flooding_law, vectordb_blackout_law, vectordb_manual, vectordb_basic, vectordb_past, vectordb_gis = build_vectorstores()
+llm = load_llama3()
 
 #langgraph 정의
 def build_graph(disaster: str):
@@ -16,6 +16,7 @@ def build_graph(disaster: str):
     graph.add_node("retrieval_manual", retrieval_manual_node(vectordb_manual))
     graph.add_node("retrieval_basic", retrieval_basic_node(vectordb_basic))
     graph.add_node("retrieval_past", retrieval_past_node(vectordb_past))
+    graph.add_node("retrieval_gis", retrieval_gis_node(vectordb_gis))
     graph.add_node("llm", llm_node(llm))
     graph.add_node("response", response_node)
 
@@ -24,10 +25,12 @@ def build_graph(disaster: str):
     graph.add_edge(START, "retrieval_manual")
     graph.add_edge(START, "retrieval_basic")
     graph.add_edge(START, "retrieval_past")
+    graph.add_edge(START, "retrieval_gis")
     graph.add_edge("retrieval_law", "llm")
     graph.add_edge("retrieval_manual", "llm")
     graph.add_edge("retrieval_basic", "llm")
     graph.add_edge("retrieval_past", "llm")
+    graph.add_edge("retrieval_gis", "llm")
     graph.add_edge("llm", "response")
     graph.add_edge("response", END)
 
@@ -47,18 +50,18 @@ def build_graph(disaster: str):
     return graph.compile()
 
 if __name__ == "__main__":
-    #사용자 입력값(침수, 정전)
+    #사용자 입력값: 재난(침수, 정전), 시(서울시), 구(전체), 동(전체)
     disaster = "침수"
-    location_si = "서울시"
+    location_si = "서울특별시"
     location_gu = "서초구"
-    location_dong = "서초동"
+    location_dong = "서초3동"
 
     #langgraph 생성
     app = build_graph(disaster)
     
     #query 내용을 기반으로 문서 탐색
     result = app.invoke({
-        "query": f"{disaster} 발생 시 파생될 수 있는 재난 유형과 대응 매뉴얼",
+        "query": f"{disaster} 재난관리 역할 임무별(본부장, 차장, 통제관, 담당관, 현장대응담당자)로 발생할 수 있는 재난관리 또는 권한 상의 문제점을 검토해줘",
         "location_si": location_si,
         "location_gu": location_gu,
         "location_dong" : location_dong,
