@@ -3,7 +3,7 @@ import os
 
 from langgraph.graph import StateGraph, START, END
 from knowledge_base_copy1 import build_vectorstores
-from models import load_llm, load_solar_pro, load_EXAONE, load_llama3, load_solar_pro2, load_EXAONE_api
+from models import load_llm, load_solar_pro, load_EXAONE, load_llama3, load_solar_pro2, load_EXAONE_api, load_gpt
 from nodes import (
     State,
     retrieval_law_node,
@@ -31,7 +31,7 @@ from nodes import (
     vectordb_past,
 ) = build_vectorstores()
 # Use the appropriate LLM loading function from models.py
-llm = load_llama3()  # or load_solar_pro(), load_EXAONE(), load_llama3(), load_llm()
+llm = load_gpt() # or load_solar_pro(), load_EXAONE(), load_llama3(), load_llm(), load_gpt(), etc.
 
 
 def build_graph(disaster: str = None):
@@ -84,7 +84,7 @@ def build_graph(disaster: str = None):
 if __name__ == "__main__":
     location_si = "서울특별시"
     location_gu = "서초구"
-    location_dong = "서초3동"
+    location_dong = "방배4동"
     disaster = "침수"
     
     app = build_graph(disaster)
