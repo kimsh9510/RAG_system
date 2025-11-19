@@ -61,7 +61,7 @@ if __name__ == "__main__":
     
     #query 내용을 기반으로 문서 탐색
     result = app.invoke({
-        "query": f"{disaster} 재난관리 역할 임무별(본부장, 차장, 통제관, 담당관, 현장대응담당자)로 발생할 수 있는 재난관리 또는 권한 상의 문제점을 검토해줘",
+        "query": f"재난대응 관련 서울시에서 대비해야할 부분",
         "location_si": location_si,
         "location_gu": location_gu,
         "location_dong" : location_dong,

@@ -76,39 +76,60 @@ def llm_node(llm):
         location_dong = state.get("location_dong") or "서초3동"
         disaster = state.get("disaster") or "재난"
 
+        MAX_BLOCK = 15000 # 각 문서의 max token 수, 총 150000 이하가 되어야함
+        # 단순 슬라이싱. llm활용해서 요약 가능
+        def trim(text, max_len=MAX_BLOCK):
+            return text[:max_len] if len(text) > max_len else text
+
         parts = []
         if "law_ctx" in state:
-            parts.append("[법]\n" + state["law_ctx"])
+            parts.append("[법]\n" + trim(state["law_ctx"]))
         if "law_flooding_ctx" in state:
-            parts.append("[법_침수]\n" + state["law_flooding_ctx"])
+            parts.append("[법_침수]\n" + trim(state["law_flooding_ctx"]))
         if "law_blackout_ctx" in state:
-            parts.append("[법_정전]\n" + state["law_blackout_ctx"])
+            parts.append("[법_정전]\n" + trim(state["law_blackout_ctx"]))
         if "manual_ctx" in state:
-            parts.append("[매뉴얼]\n" + state["manual_ctx"])
+            parts.append("[매뉴얼]\n" + trim(state["manual_ctx"]))
         if "basic_ctx" in state:
-            parts.append("[기본데이터]\n" + state["basic_ctx"])
+            parts.append("[기본데이터]\n" + trim(state["basic_ctx"]))
         if "gis_ctx" in state:
-            parts.append("[GIS데이터]\n" + state["gis_ctx"])
+            parts.append("[GIS데이터]\n" + trim(state["gis_ctx"]))
         if "past_ctx" in state:
-            parts.append("[과거재난데이터]\n" + state["past_ctx"])
+            parts.append("[과거재난데이터]\n" + trim(state["past_ctx"]))
         context = "\n\n".join(parts)
+        print("context length : ",len(context))
 
-        ##prompt 수정 필요
         prompt = f"""당신은 지역재난안전대책본부의 통제관입니다.
-                {location_si} {location_gu} {location_dong}에서 발생한 {disaster} 관련하여 재난 예측 및 대응 시나리오를 생성하려고 합니다.
+        
+                [분석 대상]
+                지역 : {location_si} {location_gu} {location_dong}
+                재난 : {disaster}
+                
+                아래 제공된 참조 문서에는 다양한 유형의 정보가 포함되어 있으며, 각 문서는 꺾쇠([])를 통해 구분됩니다.
+                - [법], [법_침수] : 관련 법령 및 행정 지침
+                - [매뉴얼] : 재난 대응 및 조치 매뉴얼
+                - [기본데이터] : 재난 관련 일반 데이터
+                - [GIS데이터] : 인구·지형·시설 등 공간 기반 데이터
+                - [과거재난데이터] : 과거 사례 및 상황 정보
 
-                아래 문서는 법, 매뉴얼, 기본데이터, 과거재난 데이터를 통합하고 있습니다.
+                아래 참조 문서를 기반으로, 
+                재난 발생 및 연쇄 재난 발생 상황에서, 도출된 시나리오에서 서울시에 대비해야할 부분들은 무엇이 있는지 알려주세요.
+                
+                [참조 문서]
                 {context}
                 
-                    대량의 물에 잠긴 지역에서 발생할 수 있는 전기 충격 및 화재 위험, 물중독 및 질병 위험, 구조물 파괴 및 붕괴 위험, 화재 및 폭발 위험에 대해
-                    재난관리 역할 임무별(본부장, 차장, 통제관, 담당관, 현장대응담당자)로 발생할 수 있는 
-                    재난관리 또는 권한 상의 문제점을 관련법령을 기반으로 검토해줘.
-                    제공된 문서를 참고하되, 만약 문맥에서 잠재적이거나 일반적인 문제점이 추론된다면 당신의 일반 지식과 추론 능력을 활용하여 함께 설명해줘.
+                대답:
                 
                 """
-        
-        #{state.get("law_flooding_ctx", "")}
+        #[GIS데이터]는 분석의 핵심 자료이므로, 답변을 작성할 때 GIS 정보에 기반한 근거를 명시적으로 포함해줘.
+        #답변을 작성할 때는 반드시 [GIS데이터]의 구체적인 수치와 지표를 근거로 삼아 이유와 함께 설명해줘
         answer = llm.invoke(prompt)
+        
+        # GPU 메모리 해제 - 누적캐시 없애기
+        import torch
+        torch.cuda.empty_cache()
+        torch.cuda.synchronize()
+        
         return {"answer": answer}
     return node
 
