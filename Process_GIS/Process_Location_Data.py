@@ -29,6 +29,7 @@ import re
 import glob
 from typing import List, Dict, Tuple, Optional, Any
 import shutil
+from pathlib import Path
 
 try:
     import geopandas as gpd
@@ -295,7 +296,10 @@ class CombineLocation:
 
 def main() -> int:
     # create output folder for generated files
-    out_dir = "Location_Population_Data"
+    process_loc_root = Path(__file__).resolve().parents[0]     # Process_GIS/
+    project_root = process_loc_root.parents[0]     
+    
+    out_dir = project_root / "Dataset" / "GIS_data"
     os.makedirs(out_dir, exist_ok=True)
 
     # 1) Ensure CSVs for all three administrative levels exist in out_dir. If missing, try to find

@@ -7,7 +7,7 @@ from nodes import State, retrieval_law_node, retrieval_flooding_law_node, retrie
 
 #벡터 db와 LLM모델 로드
 vectordb_law, vectordb_flooding_law, vectordb_blackout_law, vectordb_manual, vectordb_basic, vectordb_past, vectordb_gis = build_vectorstores()
-llm = load_gpt()
+llm = load_llama3()
 
 #langgraph 정의
 def build_graph(disaster: str):
@@ -54,7 +54,7 @@ if __name__ == "__main__":
     disaster = "침수"
     location_si = "서울특별시"
     location_gu = "서초구"
-    location_dong = "서초3동"
+    location_dong = "방배4동"
 
     #langgraph 생성
     app = build_graph(disaster)

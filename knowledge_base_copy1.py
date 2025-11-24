@@ -28,7 +28,7 @@ def _load_geojson_as_docs(file_path: str):
     # the latest location query output is produced.
     if file_path.lower().endswith('.geojson'):
         try:
-            script_path = os.path.join(os.path.dirname(__file__), "Process_GIS_Data.py")
+            script_path = os.path.join(os.path.dirname(__file__), "Process_GIS", "Process_GIS_Data.py")
             if os.path.exists(script_path):
                 print(f"Running generator for requested geojson: {script_path}")
                 proc = subprocess.run(
@@ -158,32 +158,32 @@ def _load_geojson_as_docs(file_path: str):
 
             # 3) Calculate risk labels from numbers
             # Density Risk (인구밀도 위험도)       
-            if density > 15000:
-                density_risk = "매우 높음"
-            elif density > 10000:
-                density_risk = "높음"
-            elif density > 5000:
-                density_risk = "중간"
+            if density >= 15000:
+                density_risk = "15000 이상으로 매우 높음"
+            elif density >= 10000:
+                density_risk = "10000 이상으로 높음"
+            elif density >= 5000:
+                density_risk = "5000 이상으로 중간"
             else:
-                density_risk = "낮음"
+                density_risk = "5000 미만으로 낮음"
                 
             # Population scale (인구 규모)
-            if population > 500000:
-                pop_risk = "대규모"
-            elif population > 100000:
-                pop_risk = "중규모"
-            elif population > 10000:
-                pop_risk = "소규모"
+            if population >= 500000:
+                pop_risk = "500000명 이상으로 대규모"
+            elif population >= 100000:
+                pop_risk = "100000명 이상으로 중규모"
+            elif population >= 10000:
+                pop_risk = "10000명 이상으로 소규모"
             else:
-                pop_risk = "미소규모"
+                pop_risk = "10000명 미만"
 
             # Elderly concern (고령 인구 관리 필요 여부)
-            elderly_concern = "예" if elderly_index > 100 else "아니오"
+            elderly_concern = "예" if elderly_index >= 100 else "아니오"
 
             # Evacuation difficulty -> 대피 난이도 (예시: 밀도 기반)
-            if density > 15000:
+            if density >= 15000:
                 evacuation_difficulty = "장시간 소요 (고밀도)"
-            elif density > 10000:
+            elif density >= 10000:
                 evacuation_difficulty = "중간 (중밀도)"
             else:
                 evacuation_difficulty = "짧음 (저밀도)"
@@ -363,7 +363,7 @@ def build_vectorstores():
     manual_docs = load_all_documents_to_list("Dataset/매뉴얼")
     basic_docs = load_all_documents_to_list("Dataset/기본데이터")
     past_docs = load_all_documents_to_list("Dataset/과거재난데이터")
-    gis_docs = _load_geojson_as_docs("Location_Population_Data/location_query_result.geojson")
+    gis_docs = _load_geojson_as_docs("Dataset/GIS_data/location_query_result.geojson")
 
     splitter = CharacterTextSplitter(chunk_size=200, chunk_overlap=0)
 

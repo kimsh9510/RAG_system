@@ -154,7 +154,7 @@ def main(locations_csv: Path, stats_path: Path, out_csv: Path):
         else:
             # fallback: try running as a subprocess with same interpreter
             try:
-                script = Path(__file__).resolve().parents[0] / 'Process_Location_Data.py'
+                script = Path(__file__).resolve().parents[0] / 'Process_GIS' / 'Process_Location_Data.py'
                 if script.exists():
                     print(f"Running Process_Location_Data.py to generate locations CSV: {script}")
                     subprocess.run([sys.executable, str(script)], check=False)
@@ -176,7 +176,7 @@ def main(locations_csv: Path, stats_path: Path, out_csv: Path):
     # 3) Run population processing script to produce combined_population.csv
     print('\n--- Running population data processing (Process_Population_Data.py)')
     # location where both final CSVs are expected
-    out_dir = Path(__file__).resolve().parents[0] / 'Location_Population_Data'
+    out_dir = Path(__file__).resolve().parents[0] / 'Dataset' / 'GIS_data'
     try:
         # import and call the main function from Process_Population_Data if available
         try:
@@ -219,7 +219,7 @@ def main(locations_csv: Path, stats_path: Path, out_csv: Path):
                 except Exception as e:
                     print(f"Process_Location_Data.main() raised: {e}")
             else:
-                script = Path(__file__).resolve().parents[0] / 'Process_Location_Data.py'
+                script = Path(__file__).resolve().parents[0] / 'Process_GIS' / 'Process_Location_Data.py'
                 if script.exists():
                     try:
                         print(f"Running Process_Location_Data.py subprocess to generate {loc_path}")
@@ -242,7 +242,7 @@ def main(locations_csv: Path, stats_path: Path, out_csv: Path):
                 except Exception as e:
                     print(f"Process_Population_Data.main() raised: {e}")
             else:
-                script = Path(__file__).resolve().parents[0] / 'Process_Population_Data.py'
+                script = Path(__file__).resolve().parents[0] / 'Process_GIS' / 'Process_Population_Data.py'
                 if script.exists():
                     try:
                         print(f"Running Process_Population_Data.py subprocess to generate {pop_path}")
@@ -300,9 +300,12 @@ def main(locations_csv: Path, stats_path: Path, out_csv: Path):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='Combine location metadata with population/statistics CSVs')
-    parser.add_argument('--locations', type=str, default=str(Path(__file__).resolve().parents[0] / 'Location_Population_Data' / 'combined_locations.csv'), help='Path to locations CSV (default: Location_Population_Data/combined_locations.csv)')
-    parser.add_argument('--stats', type=str, default=str(Path(__file__).resolve().parents[0] / 'Dataset' / '경계' / '경계' / '통계청_SGIS 행정구역 통계 및 경계_20240630' / '1. 통계' / '1. 2023년 행정구역 통계(인구)'), help='Path to stats CSV or directory containing CSVs')
-    parser.add_argument('--out', type=str, default=str(Path(__file__).resolve().parents[0] / 'Location_Population_Data' / 'combined_locations_population.csv'), help='Output CSV path')
+    process_loca_popu_root = Path(__file__).resolve().parents[0]  # Process_GIS/
+    project_root = process_loca_popu_root.parents[0]  
+
+    parser.add_argument('--locations', type=str, default=str(project_root / 'Dataset' / 'GIS_data' / 'combined_locations.csv'), help='Path to locations CSV (default: Dataset/GIS_data/combined_locations.csv)')
+    parser.add_argument('--stats', type=str, default=str(project_root / 'Dataset' / '경계' / '경계' / '통계청_SGIS 행정구역 통계 및 경계_20240630' / '1. 통계' / '1. 2023년 행정구역 통계(인구)'), help='Path to stats CSV or directory containing CSVs')
+    parser.add_argument('--out', type=str, default=str(project_root / 'Dataset' / 'GIS_data' / 'combined_locations_population.csv'), help='Output CSV path')
     args = parser.parse_args()
 
     try:

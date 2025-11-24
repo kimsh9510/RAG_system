@@ -1,17 +1,16 @@
 """
-Process_GIS_Data.py  — DONG-ONLY OUTPUT
+Process_GIS_Data.py
 
-What this script does
-- Runs Combine_Loca_Popu_Data.main (if needed) to ensure
-  Location_Population_Data/combined_locations_population.csv exists.
-- Extracts location variables (location_si, location_gu, location_dong) from main.py.
-- Reads the combined CSV and filters EXACTLY ONE administrative level: 동 (dong) ONLY.
-- Writes ONLY the matched dong into:
+What this script does :
+- GIS_data/combined_locations_population.csv 없으면 Combine_Loca_Popu_Data.main 실행
+- main.py에서 파라미터 추출 (location_si, location_gu, location_dong)
+- combined_locations_population.csv 에서 동(dong) 만 추출
+- 동 (dong)을 기준으로 아래 파일 생성
     - Location_Population_Data/location_query_result.txt
     - Location_Population_Data/location_query_result.geojson
       (FeatureCollection with a single Feature; geometry is null)
 
-Notes
+Notes :
 - If summary columns aren’t confidently found, we fallback to the last 8 columns of the CSV
   and map them in this order:
     total_population, average_age, population_density, aging_index,
@@ -216,10 +215,11 @@ def _make_dong_result(sub: pd.DataFrame, cols_map: Dict[str, str]) -> Dict[str, 
 
 
 def main():
-    root = Path(__file__).resolve().parents[0]
+    root = Path(__file__).resolve().parents[0]                                     #Process_GIS 폴더
+    project_root = root.parents[0]                                                 #main.py가 있는 root
     combine_module = root / 'Combine_Loca_Popu_Data.py'
-    main_py = root / 'main.py'
-    out_dir = root / 'Location_Population_Data'
+    main_py = project_root / 'main.py'
+    out_dir = project_root / 'Dataset' / 'GIS_data'
     out_dir.mkdir(exist_ok=True)
     combined_csv = out_dir / 'combined_locations_population.csv'
 
