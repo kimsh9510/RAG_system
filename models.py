@@ -369,7 +369,7 @@ def load_gpt(
 
     # find API key
     key_names = [api_key_env] if api_key_env else []
-    key_names += ["OPENAI_API_KEY", "GPT_API_KEY"]
+    key_names += ["OPENAI_API_KEY"]
     token = None
     for k in key_names:
         if k and os.environ.get(k):
@@ -543,3 +543,135 @@ def load_gpt(
             return StructuredWrapper(invoke_structured)
 
     return GPTApiClient(client_instance, model_id=model_id, max_new_tokens=max_new_tokens)
+
+def load_paid_gpt(
+    model_id: str = "gpt-5.1",
+    max_output_tokens: int = 512,
+    api_key_env: str | None = None,
+    base_url: str | None = None,
+):
+    """
+    Universal GPT loader supporting:
+    - GPT-5.1, GPT-4.1, GPT-4o → Responses API
+    - GPT-3.5 / old models → ChatCompletions API fallback
+
+    Returns:
+        client.invoke(prompt)
+        client.with_structured_output(schema).invoke(prompt)
+    """
+    import os, json, requests
+    from dotenv import load_dotenv
+    load_dotenv()
+
+    # -------------------------
+    # Load API Key
+    # -------------------------
+    key_names = [api_key_env] if api_key_env else []
+    key_names += ["GPT_API_KEY"]
+    token = None
+    for k in key_names:
+        if k and os.environ.get(k):
+            token = os.environ[k]
+            break
+    if not token:
+        raise RuntimeError("Missing API key: set OPENAI_API_KEY or GPT_API_KEY.")
+
+    # -------------------------
+    # Load OpenAI client (new SDK)
+    # -------------------------
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=token, base_url=base_url)
+    except Exception:
+        client = None
+
+    # Detect whether model requires Responses API
+    USE_RESPONSES = model_id.startswith(("gpt-5", "gpt-4.1", "gpt-4o"))
+
+    class GPTApiClient:
+        def __init__(self):
+            self.model = model_id
+            self.max_tokens = max_output_tokens
+
+        # ------------------------------------------------------------------
+        # Unified INVOKE method
+        # ------------------------------------------------------------------
+        def invoke(self, prompt: str, **kwargs):
+            """
+            Main call: automatically picks correct API.
+            """
+            max_tokens = kwargs.pop("max_tokens", self.max_tokens)
+
+            # ==============================================================
+            # NEW: Use Responses API for GPT-5.1 / GPT-4.1 / GPT-4o
+            # ==============================================================
+            if USE_RESPONSES:
+                try:
+                    resp = client.responses.create(
+                        model=self.model,
+                        input=prompt,
+                        max_output_tokens=max_tokens,
+                        **kwargs
+                    )
+                    return resp.output_text
+                except Exception as e:
+                    raise RuntimeError(f"Responses API failed: {e}")
+
+            # ==============================================================
+            # FALLBACK: old ChatCompletion API (older models)
+            # ==============================================================
+            try:
+                resp = client.chat.completions.create(
+                    model=self.model,
+                    messages=[
+                        {"role": "system", "content": "You are a helpful assistant."},
+                        {"role": "user", "content": prompt},
+                    ],
+                    max_tokens=max_tokens,
+                    **kwargs
+                )
+                return resp.choices[0].message.content
+
+            except Exception as e:
+                raise RuntimeError(f"ChatCompletion API failed: {e}")
+
+        # ------------------------------------------------------------------
+        # STRUCTURED OUTPUT SUPPORT
+        # ------------------------------------------------------------------
+        def with_structured_output(self, json_schema: dict):
+            """
+            Wrapper requiring JSON output according to a schema.
+            Uses Responses API.
+            """
+
+            def _call(prompt, **kwargs):
+                max_tokens = kwargs.pop("max_tokens", self.max_tokens)
+
+                try:
+                    resp = client.responses.create(
+                        model=self.model,
+                        input=prompt,
+                        max_output_tokens=max_tokens,
+                        response_format={
+                            "type": "json_schema",
+                            "json_schema": {"schema": json_schema}
+                        },
+                        **kwargs
+                    )
+                    return resp.output[0].content[0].text  # JSON string
+
+                except Exception as e:
+                    raise RuntimeError(f"Structured output failed: {e}")
+
+            class Wrapper:
+                def invoke(self, p, **kw):
+                    out = _call(p, **kw)
+                    try:
+                        return json.loads(out)
+                    except:
+                        return out
+
+            return Wrapper()
+
+    return GPTApiClient()
+
