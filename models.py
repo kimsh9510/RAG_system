@@ -190,10 +190,10 @@ def load_EXAONE_api(model_id="dep9i05uqo2xp7u", max_new_tokens=4096, base_url="h
 
 
 # ============================================================
-# GPT-o / GPT-4.1 / GPT-5.1 (Responses API with FIXED chunk merging)
+# gpt-5.1/ gpt-5-mini (OpenAI-compatible)
 # ============================================================
 def load_paid_gpt(
-    model_id="gpt-5.1",
+    model_id="gpt-5-mini", # or use gpt-5.1
     max_output_tokens=4096,
     api_key_env=None,
     base_url=None,
