@@ -3,7 +3,7 @@ import os
 
 from langgraph.graph import StateGraph, START, END
 from knowledge_base_copy1 import build_vectorstores
-from models import load_llm, load_solar_pro, load_EXAONE, load_llama3, load_solar_pro2, load_EXAONE_api, load_gpt, load_paid_gpt
+from models import load_llm, load_solar_pro, load_EXAONE, load_llama3, load_EXAONE_api, load_gpt, load_paid_gpt
 from nodes import (
     State,
     retrieval_law_node,
@@ -152,7 +152,8 @@ if __name__ == "__main__":
 
     system_prompt = (
         "당신은 재난안전대책본부의 친절한 AI 상담원입니다. "
-        "질문에 답변하거나, 필요한 정보를 안내하세요."
+        "항상 **최대 1000자 이내로** 간단하게 답변하세요. "
+        "불필요한 설명, 긴 나열, 반복을 절대 하지 마세요."
     )
 
     print("\n[Chatbot 모드 시작 - Quit 또는 종료 입력시 종료]\n")
