@@ -162,7 +162,7 @@ function App() {
         
         // 사용자 메시지 UI 표시
         const newUserMessage: Message = { 
-            id: Date.now(), 
+            id: Date.now() + Math.random(), 
             sender: 'user', 
             text: promptText 
         };
@@ -202,7 +202,7 @@ function App() {
             setMessages((prevMessages) => prevMessages.filter(msg => msg.text !== '답변을 생성 중입니다...'));
 
             const llmResponse: Message = {
-                id: Date.now() + 1,
+                id: Date.now() + Math.random()+2,
                 sender: 'llm',
                 text: data.response || "유효한 응답을 받지 못했습니다.",
             };

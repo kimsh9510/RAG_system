@@ -260,3 +260,15 @@ body {
 .input-form button:hover:not(:disabled) {
     background-color: #1557b0;
 }
+
+.markdown-content pre,
+.markdown-content code {
+    white-space: pre-wrap !important;       /* 줄바꿈 강제 */
+    word-break: break-word !important;      /* 단어 끊기 */
+    overflow-wrap: break-word !important;
+    background-color: transparent !important; /* 배경색 투명하게 (선택) */
+    font-family: inherit !important;          /* 폰트 통일 (선택) */
+    padding: 0 !important;
+    margin: 0 !important;
+    max-width: 100%;
+}
