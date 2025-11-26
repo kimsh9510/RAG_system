@@ -1,0 +1,262 @@
+html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+}
+
+body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    background-color: #e9ecef;
+}
+
+#root {
+    max-width: 100%;
+    width: 100%;
+    height: 100%; 
+    margin: 0;
+    padding: 0;
+}
+
+.chat-container {
+    display: flex;
+    flex-direction: column;
+    height: 100vh; /* 화면 전체 높이 사용 */
+    max-width: 100%;
+    margin: 0 auto; /* 중앙 정렬 */
+    background-color: #ffffff;
+    overflow: hidden; /* 전체 스크롤 방지 (내부만 스크롤) */
+}
+
+/* ----------------------------------------------------
+   1. 채팅 기록 영역 (스크롤 가능)
+   ---------------------------------------------------- */
+.chat-history {
+    flex-grow: 1;
+    overflow-y: auto; /* 세로 스크롤 허용 */
+    padding: 20px 15px;
+    background-color: #f7f7f7;
+    
+    scrollbar-width: thin;
+    scrollbar-color: #ccc #f0f0f0;
+}
+
+/* ----------------------------------------------------
+   2. 메시지 버블 스타일
+   ---------------------------------------------------- */
+.message {
+    padding: 12px 18px;
+    border-radius: 18px;
+    margin-bottom: 15px;
+    max-width: 85%; 
+    line-height: 1.6;
+    
+    word-break: break-word;
+    overflow-wrap: break-word;
+    white-space: pre-wrap; 
+}
+
+/* 챗봇(LLM) 메시지 */
+.message.llm {
+    background-color: #ffffff;
+    border: 1px solid #e0e0e0;
+    align-self: flex-start; /* 왼쪽 정렬 */
+    margin-right: auto;
+    border-top-left-radius: 4px;
+    color: #333;
+}
+
+/* 사용자 메시지 */
+.message.user {
+    background-color: #1a73e8;
+    color: white;
+    align-self: flex-end; /* 오른쪽 정렬 */
+    margin-left: auto;
+    border-top-right-radius: 4px;
+}
+
+/* ----------------------------------------------------
+   3. 마크다운 콘텐츠 스타일 (ReactMarkdown용)
+   ---------------------------------------------------- */
+.markdown-content {
+    width: 100%;
+    font-size: 15px;
+}
+
+/* 마크다운 내부 요소 디자인 */
+.markdown-content p {
+    margin: 0 0 10px 0; /* 문단 간격 */
+}
+.markdown-content p:last-child {
+    margin-bottom: 0;
+}
+
+/* 리스트 (점, 숫자) 들여쓰기 및 간격 */
+.markdown-content ul, .markdown-content ol {
+    padding-left: 20px; 
+    margin: 5px 0 10px 0;
+}
+
+.markdown-content li {
+    margin-bottom: 5px;
+}
+
+/* 제목 스타일 (너무 크지 않게 조절) */
+.markdown-content h1, .markdown-content h2, .markdown-content h3 {
+    font-size: 1.1em;
+    font-weight: 700;
+    margin-top: 15px;
+    margin-bottom: 8px;
+    border-bottom: 1px solid #eee;
+    padding-bottom: 5px;
+}
+
+/* 중요 강조(Bold) 색상 */
+.markdown-content strong {
+    font-weight: 700;
+    color: #d32f2f; /* 붉은 계열로 강조 (선택사항) */
+}
+
+/* ----------------------------------------------------
+   4. 사용자 상호작용 영역 (버튼 + 입력창)
+   ---------------------------------------------------- */
+.input-interaction-area { 
+    padding: 15px;
+    background-color: #ffffff;
+    border-top: 1px solid #e0e0e0;
+    flex-shrink: 0; /* 크기 줄어들지 않게 고정 */
+}
+
+/* 로딩 표시 */
+.loading-indicator-inline {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 8px;
+    margin-bottom: 10px;
+    background-color: #f1f3f4;
+    color: #5f6368;
+    border-radius: 8px;
+    font-size: 0.9em;
+}
+
+/* 버튼 컨테이너 */
+.prompt-buttons-container {
+    margin-bottom: 10px;
+    border-bottom: 1px dashed #eee; 
+    padding-bottom: 10px;
+}
+
+.prompt-section-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: #666;
+    margin: 0 0 8px 0;
+}
+
+.button-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px; 
+}
+
+.prompt-button {
+    background-color: white; 
+    color: #333;
+    border: 1px solid #dadce0;
+    border-radius: 20px; /* 둥근 버튼 */
+    padding: 8px 16px;
+    cursor: pointer;
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.2s ease;
+}
+
+.prompt-button:hover {
+    background-color: #e8f0fe; 
+    border-color: #1a73e8;
+    color: #1a73e8;
+}
+
+/* 선택 상태 표시줄 */
+.status-indicator {
+    display: flex;
+    justify-content: space-between; /* 양끝 정렬 */
+    align-items: center;
+    background-color: #f8f9fa;
+    padding: 8px 12px;
+    border-radius: 8px;
+    margin-top: 10px;
+    font-size: 13px;
+}
+
+.status-indicator p {
+    margin: 0;
+    color: #444;
+}
+
+.status-indicator .selected-text { 
+    color: #1a73e8; 
+    font-weight: 700;
+}
+
+.reset-button {
+    background-color: #ef5350; 
+    color: white;
+    border: none;
+    padding: 6px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 12px;
+}
+
+/* ----------------------------------------------------
+   5. 입력 폼 (Textarea + Button)
+   ---------------------------------------------------- */
+.input-form {
+    display: flex;
+    align-items: flex-end; 
+    gap: 10px;
+    margin-top: 10px;
+}
+
+.input-form textarea {
+    flex-grow: 1;
+    padding: 12px;
+    border: 1px solid #dadce0; 
+    border-radius: 12px;
+    resize: none; 
+    font-size: 15px; 
+    height: 60px; 
+    min-height: 60px;
+    max-height: 150px;
+    font-family: inherit;
+}
+
+.input-form textarea:focus {
+    outline: none;
+    border-color: #1a73e8;
+    box-shadow: 0 0 0 2px rgba(26, 115, 232, 0.2);
+}
+
+.input-form button {
+    padding: 0 24px;
+    background-color: #1a73e8;
+    color: white;
+    border: none;
+    border-radius: 12px;
+    cursor: pointer;
+    font-weight: 600;
+    height: 60px; /* textarea 높이와 맞춤 */
+    transition: background-color 0.2s;
+    flex-shrink: 0;
+}
+
+.input-form button:disabled {
+    background-color: #dadce0;
+    cursor: default;
+}
+
+.input-form button:hover:not(:disabled) {
+    background-color: #1557b0;
+}
