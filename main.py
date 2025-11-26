@@ -2,12 +2,12 @@ import sys
 import os
 from langgraph.graph import StateGraph, START, END
 from knowledge_base_copy1 import build_vectorstores
-from models import load_qwen, load_solar_pro, load_solar_pro2, load_llama3, load_EXAONE, load_gpt
+from models import load_qwen, load_solar_pro, load_solar_pro2, load_llama3, load_EXAONE, load_gpt, load_paid_gpt
 from nodes import State, retrieval_law_node, retrieval_flooding_law_node, retrieval_blackout_law_node, retrieval_manual_node, retrieval_basic_node, retrieval_past_node, retrieval_gis_node, llm_node, response_node
 
 #벡터 db와 LLM모델 로드
 vectordb_law, vectordb_flooding_law, vectordb_blackout_law, vectordb_manual, vectordb_basic, vectordb_past, vectordb_gis = build_vectorstores()
-llm = load_llama3()
+llm = load_paid_gpt()
 
 #langgraph 정의
 def build_graph(disaster: str):
@@ -54,14 +54,14 @@ if __name__ == "__main__":
     disaster = "침수"
     location_si = "서울특별시"
     location_gu = "서초구"
-    location_dong = "방배4동"
+    location_dong = "서초4동"
 
     #langgraph 생성
     app = build_graph(disaster)
     
     #query 내용을 기반으로 문서 탐색
     result = app.invoke({
-        "query": f"재난관리 역할 임무별(본부장, 차장, 통제관, 담당관, 현장대응담당자)로 발생할 수 있는 재난관리 또는 권한 상의 문제점",
+        "query": f"재난 대응 및 지원 과정에 발생할 수 있는 위협요인",
         "location_si": location_si,
         "location_gu": location_gu,
         "location_dong" : location_dong,
