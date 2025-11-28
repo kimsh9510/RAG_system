@@ -10,6 +10,12 @@ interface Message {
     text: string;
 }
 
+// 모델 옵션 정의
+const MODEL_OPTIONS = [
+    { value: 'llama3', label: ' LLama' },
+    { value: 'gpt-5.1', label: ' GPT' }
+];
+
 const DISASTER_OPTIONS = ["침수", "정전"];
 const CITY_OPTIONS = ["서울"]; 
 const DISTRICT_OPTIONS: { [key: string]: string[] } = {
@@ -137,8 +143,12 @@ const DONG_OPTIONS: { [key: string]: string[] } = {
 function App() {
     // 1. 상태 정의
     const [messages, setMessages] = useState<Message[]>([
-        { id: 1, sender: 'llm', text: "안녕하세요! 재난 상황과 위치를 설정한 후 질문해 주세요." }
+        { id: 1, sender: 'llm', text: "안녕하세요! 먼저 사용할 AI 모델을 선택해 주세요." }
     ]);
+    
+    // 2. 모델 선택 상태 
+    const [selectedModel, setSelectedModel] = useState<string>('');
+    
     const [selectedDisaster, setSelectedDisaster] = useState<string>('');
     const [selectedCity, setSelectedCity] = useState<string>('');
     const [selectedDistrict, setSelectedDistrict] = useState<string>(''); 
@@ -147,7 +157,7 @@ function App() {
     const [textInput, setTextInput] = useState('');
     const [isLoading, setIsLoading] = useState(false);
 
-    // 2. 스크롤 관리
+    // 3. 스크롤 관리
     const messagesEndRef = useRef<HTMLDivElement>(null);
     const scrollToBottom = () => {
         messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -157,7 +167,7 @@ function App() {
         scrollToBottom();
     }, [messages]);
 
-    // 3. API 호출 
+    // 4. API 호출 
     const sendMessageToLLM = async (promptText: string, locationData?: { city: string, district: string, dong: string, disaster: string }) => {
         
         // 사용자 메시지 UI 표시
@@ -169,20 +179,21 @@ function App() {
         setMessages((prevMessages) => [...prevMessages, newUserMessage]);
 
         const loadingMessage: Message = {
-            id: Date.now() + 0.5,
+            id: Date.now() + Math.random() + 1,
             sender: 'llm',
             text: '답변을 생성 중입니다...'
         };
         setMessages((prevMessages) => [...prevMessages, loadingMessage]);
         setIsLoading(true);
 
-        // 백엔드로 보낼 데이터 구성 (현재 선택된 상태값 사용)
+        // 백엔드로 보낼 데이터 구성
         const requestBody = {
             query: promptText, // 합쳐진 프롬프트 전송
             location_si: locationData?.city || selectedCity || 'N/A',
             location_gu: locationData?.district || selectedDistrict || 'N/A',
             location_dong: locationData?.dong || selectedDong || 'N/A',
             disaster: locationData?.disaster || selectedDisaster || 'N/A',
+            model: selectedModel // 선택된 모델값 전송
         };
         
         console.log("LLM 전송 Body:", requestBody);
@@ -220,24 +231,22 @@ function App() {
         }
     };
 
-    // 4. 폼 제출 핸들러 
+    // 5. 폼 제출 핸들러 
     const handleFormSubmit = (e: React.FormEvent) => {
         e.preventDefault(); 
         if (!textInput.trim()) return; 
 
-        // 선택된 정보가 있다면 맥락(Context) 텍스트 생성
         let contextPrefix = "";
         if (selectedDisaster && selectedCity && selectedDistrict && selectedDong) {
             contextPrefix = `[상황 설정: ${selectedCity} ${selectedDistrict} ${selectedDong}에서 발생한 ${selectedDisaster}] \n`;
         } else if (selectedDisaster) {
-            // 일부만 선택했을 경우
             contextPrefix = `[재난 상황: ${selectedDisaster}] \n`;
         }
 
         // 맥락과 사용자 질문을 합침
         const combinedPrompt = `${contextPrefix}질문: ${textInput}`;
 
-        // LLM 전송 (선택된 상태값도 전달)
+        // LLM 전송
         sendMessageToLLM(combinedPrompt, {
             city: selectedCity,
             district: selectedDistrict,
@@ -248,12 +257,22 @@ function App() {
         setTextInput(''); // 입력창 비우기
     };
     
-    const resetSelection = () => {
+    // 전체 초기화
+    const resetAll = () => {
+        setSelectedModel('');
         setSelectedDisaster('');
         setSelectedCity('');
         setSelectedDistrict(''); 
         setSelectedDong('');     
     };
+
+    // 지역/재난만 재설정 (모델 유지)
+    const resetLocation = () => {
+        setSelectedDisaster('');
+        setSelectedCity('');
+        setSelectedDistrict(''); 
+        setSelectedDong('');     
+    }
 
     return (
         <div className="chat-container">
@@ -267,98 +286,134 @@ function App() {
                 )}
                 
                 <div className="prompt-buttons-container">
-                    {/* 1단계: 재난 선택 */}
-                    {!selectedDisaster && (
-                        <>
-                            <h3 className="prompt-section-title">어떤 재난 상황인가요?</h3>
+                    {!selectedModel && (
+                        <div className="step-container">
+                            <h3 className="prompt-section-title">Step 1. 사용할 AI 모델을 선택하세요:</h3>
                             <div className="button-list">
-                                {DISASTER_OPTIONS.map((disaster) => (
-                                    <button key={disaster} className="prompt-button" onClick={() => setSelectedDisaster(disaster)}>
-                                        {disaster}
-                                    </button>
-                                ))}
-                            </div>
-                        </>
-                    )}
-                    
-                    {/* 2단계: 도시 선택 */}
-                    {selectedDisaster && !selectedCity && (
-                        <>
-                            <h3 className="prompt-section-title">지역(시)을 선택하세요:</h3>
-                            <div className="button-list">
-                                {CITY_OPTIONS.map((city) => (
-                                    <button key={city} className="prompt-button" onClick={() => setSelectedCity(city)}>
-                                        {city}
-                                    </button>
-                                ))}
-                            </div>
-                        </>
-                    )}
-
-                    {/* 3단계: 구 선택 */}
-                    {selectedCity && !selectedDistrict && (
-                        <>
-                            <h3 className="prompt-section-title">지역(구)을 선택하세요:</h3>
-                            <div className="button-list">
-                                {DISTRICT_OPTIONS[selectedCity]?.map((district) => (
-                                    <button key={district} className="prompt-button" onClick={() => setSelectedDistrict(district)}>
-                                        {district}
-                                    </button>
-                                ))}
-                            </div>
-                        </>
-                    )}
-                    
-                    {/* 4단계: 동 선택 */}
-                    {selectedDistrict && !selectedDong && (
-                        <>
-                            <h3 className="prompt-section-title">지역(동)을 선택하세요:</h3>
-                            <div className="button-list">
-                                {DONG_OPTIONS[selectedDistrict]?.map((dong) => (
-                                    <button 
-                                        key={dong} 
-                                        className="prompt-button" 
-                                        onClick={() => setSelectedDong(dong)} // 단순히 상태만 업데이트
+                                {MODEL_OPTIONS.map((option) => (
+                                    <button
+                                        key={option.value}
+                                        onClick={() => {
+                                            setSelectedModel(option.value);
+                                            setMessages(prev => [...prev, {
+                                                id: Date.now(),
+                                                sender: 'llm',
+                                                text: `**${option.label}**이(가) 선택되었습니다. 이제 재난 상황을 설정해 주세요.`
+                                            }]);
+                                        }}
+                                        className="prompt-button"
+                                        style={{ fontWeight: 'bold', borderColor: '#666' }}
                                     >
-                                        {dong}
+                                        {option.label}
                                     </button>
                                 ))}
                             </div>
-                        </>
-                    )}
-
-                    {/* 선택 상태 표시줄 */}
-                    {(selectedDisaster || selectedCity) && (
-                        <div className="status-indicator">
-                            <p>
-                                설정: <b className="selected-text">{selectedDisaster || '-'}</b> / 
-                                <b className="selected-text">{selectedCity || '-'}</b> / 
-                                <b className="selected-text">{selectedDistrict || '-'}</b> / 
-                                <b className="selected-text">{selectedDong || '-'}</b>
-                            </p>
-                            <button onClick={resetSelection} className="reset-button">재설정</button>
                         </div>
+                    )}
+                    {selectedModel && (
+                        <>
+                             {/* 현재 모델 표시 및 변경 버튼 */}
+                             <div className="status-indicator" style={{marginBottom: '15px', borderBottom: '1px solid #eee', paddingBottom: '10px'}}>
+                                <p>사용 중인 모델: <b className="selected-text" style={{color: '#d32f2f'}}>{MODEL_OPTIONS.find(o => o.value === selectedModel)?.label}</b></p>
+                                <button onClick={resetAll} className="reset-button" style={{backgroundColor: '#6c757d', fontSize: '12px', padding: '5px 10px'}}>모델 변경</button>
+                            </div>
+
+                            {/* 1단계: 재난 선택 */}
+                            {!selectedDisaster && (
+                                <>
+                                    <h3 className="prompt-section-title">Step 2. 어떤 재난 상황인가요?</h3>
+                                    <div className="button-list">
+                                        {DISASTER_OPTIONS.map((disaster) => (
+                                            <button key={disaster} className="prompt-button" onClick={() => setSelectedDisaster(disaster)}>
+                                                {disaster}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </>
+                            )}
+                            
+                            {/* 2단계: 도시 선택 */}
+                            {selectedDisaster && !selectedCity && (
+                                <>
+                                    <h3 className="prompt-section-title">지역(시)을 선택하세요:</h3>
+                                    <div className="button-list">
+                                        {CITY_OPTIONS.map((city) => (
+                                            <button key={city} className="prompt-button" onClick={() => setSelectedCity(city)}>
+                                                {city}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </>
+                            )}
+
+                            {/* 3단계: 구 선택 */}
+                            {selectedCity && !selectedDistrict && (
+                                <>
+                                    <h3 className="prompt-section-title">지역(구)을 선택하세요:</h3>
+                                    <div className="button-list">
+                                        {DISTRICT_OPTIONS[selectedCity]?.map((district) => (
+                                            <button key={district} className="prompt-button" onClick={() => setSelectedDistrict(district)}>
+                                                {district}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </>
+                            )}
+                            
+                            {/* 4단계: 동 선택 */}
+                            {selectedDistrict && !selectedDong && (
+                                <>
+                                    <h3 className="prompt-section-title">지역(동)을 선택하세요:</h3>
+                                    <div className="button-list">
+                                        {DONG_OPTIONS[selectedDistrict]?.map((dong) => (
+                                            <button 
+                                                key={dong} 
+                                                className="prompt-button" 
+                                                onClick={() => setSelectedDong(dong)} 
+                                            >
+                                                {dong}
+                                            </button>
+                                        ))}
+                                    </div>
+                                </>
+                            )}
+
+                            {/* 선택 상태 표시줄 */}
+                            {(selectedDisaster || selectedCity) && (
+                                <div className="status-indicator">
+                                    <p>
+                                        설정: <b className="selected-text">{selectedDisaster || '-'}</b> / 
+                                        <b className="selected-text">{selectedCity || '-'}</b> / 
+                                        <b className="selected-text">{selectedDistrict || '-'}</b> / 
+                                        <b className="selected-text">{selectedDong || '-'}</b>
+                                    </p>
+                                    <button onClick={resetLocation} className="reset-button">재설정</button>
+                                </div>
+                            )}
+                        </>
                     )}
                 </div>
 
                 {/* 입력 폼 */}
-                <form className="input-form" onSubmit={handleFormSubmit}>
-                    <textarea
-                        value={textInput}
-                        onChange={(e) => setTextInput(e.target.value)}
-                        // 선택 상태에 따라 플레이스홀더 메시지 변경
-                        placeholder={
-                            selectedDong 
-                            ? `설정된 ${selectedDisaster} 상황에 대해 궁금한 점을 물어보세요.` 
-                            : "직접 질문을 입력하거나 위에서 상황을 먼저 선택하세요."
-                        }
-                        rows={1} 
-                        disabled={isLoading}
-                    />
-                    <button type="submit" disabled={!textInput.trim() || isLoading}>
-                        {isLoading? '전송 중...':'전송'}
-                    </button>
-                </form>
+                {selectedModel && (
+                    <form className="input-form" onSubmit={handleFormSubmit}>
+                        <textarea
+                            value={textInput}
+                            onChange={(e) => setTextInput(e.target.value)}
+                            // 선택 상태에 따라 메시지 변경
+                            placeholder={
+                                selectedDong 
+                                ? `설정된 ${selectedDisaster} 상황에 대해 궁금한 점을 물어보세요.` 
+                                : "위에서 상황을 먼저 선택하세요."
+                            }
+                            rows={1} 
+                            disabled={isLoading}
+                        />
+                        <button type="submit" disabled={!textInput.trim() || isLoading}>
+                            {isLoading? '전송 중...':'전송'}
+                        </button>
+                    </form>
+                )}
 
             </div>
         </div>
