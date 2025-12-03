@@ -79,6 +79,50 @@ def load_llama3(model_id="meta-llama/Meta-Llama-3.1-8B-Instruct", max_new_tokens
     return _hf_pipeline(model, tokenizer, max_new_tokens)
 
 
+# ============================================================
+# Llama-4 Scout (Meta)
+# ============================================================
+
+def load_llama4(model_id="meta-llama/Llama-4-Scout-17B-16E-Instruct", max_new_tokens=4096):
+    """
+    Load Meta Llama-4-Scout-17B-16E-Instruct for text-only chat (no images).
+    """
+    _ensure_packages(["transformers==4.51.0"])
+    from transformers import AutoTokenizer, Llama4ForConditionalGeneration
+
+    load_dotenv()
+    token = os.environ.get("HUGGINGFACE_TOKEN") or os.environ.get("HF_HUB_TOKEN")
+    if token:
+        os.environ["HF_HUB_TOKEN"] = token
+
+    tokenizer = AutoTokenizer.from_pretrained(model_id, token=token)
+    model = Llama4ForConditionalGeneration.from_pretrained(
+        model_id,
+        attn_implementation="flex_attention",
+        device_map="auto",
+        torch_dtype=torch.bfloat16,
+        token=token,
+    )
+
+    def invoke(prompt: str, **kwargs):
+        input_ids = tokenizer(prompt, return_tensors="pt").input_ids.to(model.device)
+        outputs = model.generate(
+            input_ids,
+            max_new_tokens=kwargs.get("max_new_tokens", max_new_tokens),
+        )
+        response = tokenizer.decode(outputs[0][input_ids.shape[-1]:], skip_special_tokens=True)
+        return response
+
+    class Llama4Client:
+        def __init__(self):
+            self.model_id = model_id
+            self.max_new_tokens = max_new_tokens
+        def invoke(self, prompt: str, **kwargs):
+            return invoke(prompt, **kwargs)
+
+    return Llama4Client()
+
+
 def load_solar_pro(model_id="upstage/solar-pro-preview-instruct", max_new_tokens=4096):
     _ensure_packages(["transformers==4.44.2", "torch==2.3.1", "flash_attn==2.5.8", "accelerate==0.31.0"])
     import gc

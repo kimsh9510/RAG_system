@@ -152,71 +152,6 @@ def build_llama3_context() -> str:
     return "\n\n".join(parts)
 
 
-# ============================================================
-# Llama3 answer post-processing / cleaning
-# ============================================================
-def clean_llama3_answer(raw: str, user_question: str) -> str:
-    """
-    Cleans Llama3 output to:
-    1) Remove prompt echo (법/매뉴얼/GIS context, 사용자 질문, etc.)
-    2) Strip repeated disclaimers like:
-       '위의 답변은 재난안전상담 AI가 제공하는 답변입니다...'
-    3) Enforce short-ish output & keep only answer + 1-line suggestion.
-    """
-    if not raw:
-        return ""
-
-    text = raw
-
-    # 1) If the model repeats "AI 답변:" style, keep only part after it
-    if "AI 답변:" in text:
-        text = text.split("AI 답변:", 1)[1].strip()
-
-    # 2) If it followed the [답변] / [다음질문_1줄] format, parse it
-    #    and drop anything after those sections.
-    if "[답변]" in text:
-        # Keep only from first [답변]
-        text = text.split("[답변]", 1)[1]
-        answer_part = text
-        followup_part = ""
-
-        if "[다음질문_1줄]" in text:
-            answer_part, rest = text.split("[다음질문_1줄]", 1)
-            # first non-empty line as follow-up question
-            for line in rest.strip().splitlines():
-                if line.strip():
-                    followup_part = line.strip()
-                    break
-
-        # Rebuild in a clean, minimal format
-        rebuilt = "[답변]\n" + answer_part.strip()
-        if followup_part:
-            rebuilt += "\n\n[다음질문_1줄]\n" + followup_part
-        text = rebuilt.strip()
-
-    # 3) Remove the repeated disclaimer lines completely
-    disclaimer_pattern = re.compile(
-        r"^위의 답변은 재난안전상담 AI가 제공하는 답변입니다.*$"
-    )
-
-    cleaned_lines = []
-    for line in text.splitlines():
-        if disclaimer_pattern.match(line.strip()):
-            continue
-        cleaned_lines.append(line)
-    text = "\n".join(cleaned_lines).strip()
-
-    # 4) If the model still echoed the user question + 설명해줘 etc,
-    #    that's fine; but we cut off any gigantic tail (safety).
-    max_chars = 1500  # hard cap for runaway generations
-    if len(text) > max_chars:
-        # cut on a line boundary
-        truncated = text[:max_chars]
-        if "\n" in truncated:
-            truncated = truncated.rsplit("\n", 1)[0]
-        text = truncated.strip()
-
-    return text.strip()
 
 
 # ============================================================
@@ -265,17 +200,9 @@ def run_chat_llama3():
     context = build_llama3_context()
     history: list[dict] = []
 
-    # NOTE: we force a strict output format here to make cleaning easy
     system = (
-        "당신은 재난안전 상담을 도와주는 AI입니다.\n"
-        "반드시 아래 형식을 지켜서만 답변하세요.\n\n"
-        "[답변]\n"
-        "- 사용자 질문에 대한 핵심 내용만 3~6문장으로 정리해서 작성\n"
-        "- 불필요한 서론, 경고문, 반복 문장, 자기 소개는 절대 쓰지 말 것\n\n"
-        "[다음질문_1줄]\n"
-        "- 사용자가 이어서 물어볼 수 있는 한 문장짜리 질문 1개만 작성\n"
-        "- 없으면 '다음 질문 예시: (예시 한 문장)' 형식으로 작성\n"
-        "위 형식 이외의 텍스트는 절대 추가하지 마세요."
+        "당신은 재난안전대책본부의 친절한 AI 상담원입니다. "
+        "항상 1000자 이내로, 핵심만 간단하게 답변하세요."
     )
 
     while True:
@@ -283,24 +210,18 @@ def run_chat_llama3():
         if user.lower() in ["quit", "종료"]:
             break
         if is_out_of_scope(user):
-            print("Assistant: 재난 관련 질문만 가능합니다.")
+            print("Assistant: 재난 관련 질문만 답변 가능합니다.")
             continue
 
-        # Structured prompt: system + 상황 + 모든 이전 대화 + 새 질문
-        parts: list[str] = [system]
-        parts.append("[핵심상황]\n" + context)
-
+        parts: list[str] = [system, "[상황정보]\n" + context]
         for h in history:
-            parts.append(f"이전대화-{h['role']}:\n{h['text']}")
-
-        parts.append("사용자 질문:\n" + user)
+            parts.append(f"[{h['role']}]\n{h['text']}")
+        parts.append(f"[user]\n{user}")
 
         prompt = "\n\n".join(parts)
-        raw_ans = llm.invoke(prompt)
-        ans = clean_llama3_answer(raw_ans, user)
+        ans = llm.invoke(prompt)
 
         print("\nAssistant:\n", ans)
-
         history.append({"role": "user", "text": user})
         history.append({"role": "assistant", "text": ans})
 
