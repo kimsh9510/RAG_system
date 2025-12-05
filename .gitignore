@@ -1,5 +1,6 @@
 #데이터셋 폴더 무시
 Dataset/
+Location_Population_Data/
 
 #파이썬 캐시 무시
 __pychche__/
@@ -10,3 +11,12 @@ __pychche__/
 
 #가상환경 폴더 무시
 .venv/
+
+#전달파일 무시
+Disaster_program1/
+
+#빌드파일 무시
+build/
+
+#spec 파일 무시
+.spec
