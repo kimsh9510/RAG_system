@@ -19,4 +19,4 @@ Disaster_program1/
 build/
 
 #spec 파일 무시
-.spec
+.spec/
