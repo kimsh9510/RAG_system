@@ -1,13 +1,5 @@
-# chat.py
-"""
-Standalone chatbot with:
-- GPT: full RAG context
-- Llama3: short structured RAG context (like llm_node)
-- Full chat history for both
-- Extra cleaning & controls ONLY for Llama3
-"""
+# chat.py — Demonstration version (Llama3 uses EXACT original nodes.py RAG with NO trimming)
 
-import re
 import warnings
 
 from knowledge_base_copy1 import build_vectorstores
@@ -22,220 +14,181 @@ from nodes import (
     retrieval_population_node,
 )
 
-# ============================================================
-# Silence transformers warnings (Llama3 etc.)
-# ============================================================
+
+# Silence warning noise
 try:
-    # Silence transformers logging like:
-    # "Starting from v4.46, the `logits` model output ..."
-    from transformers.utils import logging as hf_logging  # type: ignore
+    from transformers.utils import logging as hf_logging
     hf_logging.set_verbosity_error()
 except Exception:
     pass
 
-# Silence the annoying do_sample/temperature/top_p UserWarnings
-warnings.filterwarnings(
-    "ignore",
-    category=UserWarning,
-    module="transformers.generation.configuration_utils",
-)
+warnings.filterwarnings("ignore")
 
 
 # ============================================================
-# Out-of-scope filter
+# EXACT SAME CONTEXT AS llm_node (NO trimming)
 # ============================================================
-def is_out_of_scope(msg: str) -> bool:
-    out = [
-        "연애", "사랑", "요리", "게임", "주식", "코딩", "알고리즘",
-        "영화", "노래", "드라마", "메이크업", "건강", "운동",
-        "심리", "보험", "취업", "여행", "맛집",
-    ]
-    dis = ["재난", "안전", "대응", "위험", "침수", "지진", "화재", "태풍", "정전", "대피", "피해", "수해"]
+def build_context_exact_nodes(query, disaster):
+    """
+    This builds the context EXACTLY like nodes.py -> llm_node
+    NO trimming. NO slicing. NO summarization.
+    This will break Llama3 because context is massive.
+    """
 
-    return (any(k in msg for k in out) and not any(k in msg for k in dis)) or len(msg.strip()) < 2
-
-
-# ============================================================
-# Build FULL RAG context for GPT
-# ============================================================
-def build_full_context() -> str:
     (
-        v_law,
-        v_flood,
-        v_blackout,
-        v_manual,
-        v_basic,
-        v_pop,
-        v_past,
+        vectordb_law,
+        vectordb_flooding_law,
+        vectordb_blackout_law,
+        vectordb_manual,
+        vectordb_basic,
+        vectordb_population,
+        vectordb_past,
     ) = build_vectorstores()
 
     state = {
-        "query": "침수 발생 시 파생될 수 있는 재난 유형과 대응 매뉴얼",
+        "query": query,
         "location_si": "서울특별시",
         "location_gu": "서초구",
         "location_dong": "방배4동",
-        "disaster": "침수",
+        "disaster": disaster,
     }
 
-    parts: list[str] = []
-    parts.append("[법]\n" + retrieval_law_node(v_law)(state)["law_ctx"])
-    if v_flood:
-        parts.append("[법_침수]\n" + retrieval_flooding_law_node(v_flood)(state)["law_flooding_ctx"])
-    if v_blackout:
-        parts.append("[법_정전]\n" + retrieval_blackout_law_node(v_blackout)(state)["law_blackout_ctx"])
+    parts = []
 
-    parts.append("[매뉴얼]\n" + retrieval_manual_node(v_manual)(state)["manual_ctx"])
-    parts.append("[기본데이터]\n" + retrieval_basic_node(v_basic)(state)["basic_ctx"])
-    parts.append("[GIS_인구]\n" + retrieval_population_node(v_pop)(state)["population_ctx"])
-    parts.append("[과거재난데이터]\n" + retrieval_past_node(v_past)(state)["past_ctx"])
+    # EXACT behavior of nodes.py
+    parts.append("[법]\n" + retrieval_law_node(vectordb_law)(state)["law_ctx"])
 
-    return "\n\n".join(parts)
+    if disaster == "침수" and vectordb_flooding_law:
+        parts.append("[법_침수]\n" + retrieval_flooding_law_node(vectordb_flooding_law)(state)["law_flooding_ctx"])
+
+    if disaster == "정전" and vectordb_blackout_law:
+        parts.append("[법_정전]\n" + retrieval_blackout_law_node(vectordb_blackout_law)(state)["law_blackout_ctx"])
+
+    parts.append("[매뉴얼]\n" + retrieval_manual_node(vectordb_manual)(state)["manual_ctx"])
+    parts.append("[기본데이터]\n" + retrieval_basic_node(vectordb_basic)(state)["basic_ctx"])
+    parts.append("[GIS_인구]\n" + retrieval_population_node(vectordb_population)(state)["population_ctx"])
+    parts.append("[과거재난데이터]\n" + retrieval_past_node(vectordb_past)(state)["past_ctx"])
+
+    # This can exceed 50k characters, especially manual_ctx with k=30
+    context = "\n\n".join(parts)
+    return context
 
 
 # ============================================================
-# Build SHORT structured context for Llama3 (like llm_node)
+# EXACT SAME PROMPT FORMAT AS llm_node (NO trimming)
 # ============================================================
-def build_llama3_context() -> str:
+# def build_prompt(context, disaster, loc_si, loc_gu, loc_dong):
+#     return f"""
+# 당신은 지역재난안전대책본부의 통제관입니다.
+# {loc_si} {loc_gu} {loc_dong}에서 발생한 {disaster} 관련하여 재난 예측 및 대응 시나리오를 생성하려고 합니다.
+
+# 아래 문서는 법, 매뉴얼, 기본데이터, 과거재난 데이터를 통합하고 있습니다.
+# {context}
+
+# 문서를 바탕으로 다음 두가지를 작성하세요.
+
+# 1. [연계 재난 탐지]
+# "{disaster}"이 발생했을 때, 함께 발생하거나 영향을 줄 수 있는 연계 재난을 3가지 정도 나열하세요.
+# 각 재난은 왜 발생하는지(원인)와 어떤 피해로 이어지는지도 간단히 설명하세요.
+
+# 2. [대응 시나리오]
+# 위에서 탐지된 각 연계 재난 유형별로, 단계별 대응 절차를 [법_{disaster}] 법령을 참고하여 제시하세요.
+# """
+
+# ============================================================
+# REVISED PROMPT FORMAT FOR CHAT
+# ============================================================
+def build_prompt(context, disaster, loc_si, loc_gu, loc_dong):
+    return f"""
+    당신은 재난안전대책본부의 친절한 AI 상담원입니다.
+    {loc_si} {loc_gu} {loc_dong}에서 발생한 {disaster} 관련하여 사용자의 질문에 답변하려고 합니다.
+    
+    아래 문서는 법, 매뉴얼, 기본데이터, 과거재난 데이터를 통합하고 있습니다.
+    {context}
+    문서를 바탕으로 사용자의 질문에 답변하세요.
+    항상 1000자 이내로, 핵심만 간단하게 답변하세요.
     """
-    Same structure as llm_node, but carefully trimmed
-    so the prompt is not gigantic.
-    """
-    (
-        v_law,
-        v_flood,
-        v_blackout,
-        v_manual,
-        v_basic,
-        v_pop,
-        v_past,
-    ) = build_vectorstores()
-
-    state = {
-        "query": "침수 발생 시 파생될 수 있는 재난 유형과 대응 매뉴얼",
-        "location_si": "서울특별시",
-        "location_gu": "서초구",
-        "location_dong": "방배4동",
-        "disaster": "침수",
-    }
-
-    parts: list[str] = []
-
-    law = retrieval_law_node(v_law)(state)["law_ctx"]
-    if len(law) > 1200:
-        law = law[:1200]
-    parts.append("[법]\n" + law)
-
-    if v_flood:
-        flood = retrieval_flooding_law_node(v_flood)(state)["law_flooding_ctx"]
-        if len(flood) > 1200:
-            flood = flood[:1200]
-        parts.append("[법_침수]\n" + flood)
-
-    manual = retrieval_manual_node(v_manual)(state)["manual_ctx"]
-    if len(manual) > 1200:
-        manual = manual[:1200]
-    parts.append("[매뉴얼]\n" + manual)
-
-    basic = retrieval_basic_node(v_basic)(state)["basic_ctx"]
-    parts.append("[기본데이터]\n" + basic)
-
-    pop = retrieval_population_node(v_pop)(state)["population_ctx"]
-    if len(pop) > 800:
-        pop = pop[:800]
-    parts.append("[GIS_인구]\n" + pop)
-
-    past = retrieval_past_node(v_past)(state)["past_ctx"]
-    if len(past) > 800:
-        past = past[:800]
-    parts.append("[과거재난데이터]\n" + past)
-
-    return "\n\n".join(parts)
-
-
 
 
 # ============================================================
-# GPT chat (no special cleaning)
+# Llama3 chat using EXACT nodes.py system (NO TRIMMING)
 # ============================================================
-def run_chat_gpt():
-    print("[GPT-5-mini 로딩 중...]")
-    llm = load_paid_gpt(model_id="gpt-5-mini")
-
-    context = build_full_context()
-    history: list[dict] = []
-
-    system = (
-        "당신은 재난안전대책본부의 친절한 AI 상담원입니다. "
-        "항상 1000자 이내로, 핵심만 간단하게 답변하세요."
-    )
-
-    while True:
-        user = input("\nYou: ").strip()
-        if user.lower() in ["quit", "종료"]:
-            break
-        if is_out_of_scope(user):
-            print("Assistant: 재난 관련 질문만 답변 가능합니다.")
-            continue
-
-        parts: list[str] = [system, "[상황정보]\n" + context]
-        for h in history:
-            parts.append(f"[{h['role']}]\n{h['text']}")
-        parts.append(f"[user]\n{user}")
-
-        prompt = "\n\n".join(parts)
-        ans = llm.invoke(prompt)
-
-        print("\nAssistant:\n", ans)
-        history.append({"role": "user", "text": user})
-        history.append({"role": "assistant", "text": ans})
-
-
-# ============================================================
-# Llama3 chat (short context, full history, cleaned output)
-# ============================================================
-def run_chat_llama3():
+def run_llama3_raw():
     print("[Llama3.1-8B 로딩 중...]")
     llm = load_llama3()
 
-    context = build_llama3_context()
-    history: list[dict] = []
-
-    system = (
-        "당신은 재난안전대책본부의 친절한 AI 상담원입니다. "
-        "항상 1000자 이내로, 핵심만 간단하게 답변하세요."
+    # Build giant context like original LangGraph system
+    context = build_context_exact_nodes(
+        query="침수 발생 시 파생될 수 있는 재난 유형과 대응 매뉴얼",
+        disaster="침수",
     )
 
+    loc_si = "서울특별시"
+    loc_gu = "서초구"
+    loc_dong = "방배4동"
+    disaster = "침수"
+
+    # Always reuse the SAME full context (like llm_node)
     while True:
         user = input("\nYou: ").strip()
         if user.lower() in ["quit", "종료"]:
             break
-        if is_out_of_scope(user):
-            print("Assistant: 재난 관련 질문만 답변 가능합니다.")
-            continue
 
-        parts: list[str] = [system, "[상황정보]\n" + context]
-        for h in history:
-            parts.append(f"[{h['role']}]\n{h['text']}")
-        parts.append(f"[user]\n{user}")
+        # Build prompt EXACTLY same as llm_node
+        prompt = build_prompt(context, disaster, loc_si, loc_gu, loc_dong)
 
-        prompt = "\n\n".join(parts)
-        ans = llm.invoke(prompt)
+        # Add user question at the end
+        prompt += f"\n\n[사용자 질문]\n{user}\n"
 
-        print("\nAssistant:\n", ans)
-        history.append({"role": "user", "text": user})
-        history.append({"role": "assistant", "text": ans})
+        # This is where Llama3 breaks
+        answer = llm.invoke(prompt)
+
+        print("\nAssistant:\n", answer)
 
 
 # ============================================================
-# Main chooser
+# Paid GPT chat using EXACT nodes.py system
+# ============================================================
+def run_paid_gpt_raw():
+    print("[Paid GPT 모델 로딩 중...]")
+    llm = load_paid_gpt()
+
+    # Build giant context like original LangGraph system
+    context = build_context_exact_nodes(
+        query="침수 발생 시 파생될 수 있는 재난 유형과 대응 매뉴얼",
+        disaster="침수",
+    )
+
+    loc_si = "서울특별시"
+    loc_gu = "서초구"
+    loc_dong = "방배4동"
+    disaster = "침수"
+
+    # Always reuse the SAME full context (like llm_node)
+    while True:
+        user = input("\nYou: ").strip()
+        if user.lower() in ["quit", "종료"]:
+            break
+
+        # Build prompt EXACTLY same as llm_node
+        prompt = build_prompt(context, disaster, loc_si, loc_gu, loc_dong)
+
+        # Add user question at the end
+        prompt += f"\n\n[사용자 질문]\n{user}\n"
+
+        answer = llm.invoke(prompt)
+
+        print("\nAssistant:\n", answer)
+
+
+# ============================================================
+# Main
 # ============================================================
 if __name__ == "__main__":
-    print("======= 모델 선택 =======")
-    print("1) Llama3 (local, cleaned)")
-    print("2) GPT-5-mini (API, full context)")
-    c = input("모델 번호 입력: ").strip()
-
-    if c == "1":
-        run_chat_llama3()
+    # Choose which model to run
+    print("Select model: [1] Llama3 [2] Paid GPT")
+    choice = input("Enter 1 or 2: ").strip()
+    if choice == "2":
+        run_paid_gpt_raw()
     else:
-        run_chat_gpt()
+        run_llama3_raw()
