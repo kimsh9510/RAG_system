@@ -1,0 +1,15 @@
+[
+  {
+    "administrative_level": "시도, 시군구, 동",
+    "area_code": "11220650",
+    "full_location_name": "서울특별시 서초구 방배4동",
+    "total_population": 21665,
+    "average_age": 43.0,
+    "population_density": 22833.8,
+    "aging_index": 151.1,
+    "elderly_dependency_ratio": 23.0,
+    "youth_dependency_ratio": 15.2,
+    "total_population_male": 9866,
+    "total_population_female": 11799
+  }
+]
