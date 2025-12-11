@@ -1,5 +1,8 @@
 # create_filestore.py
 
+# Used for the initial creation of File Search store for RAG with Gemini models
+# ❌❌❌❌❌❌❌ DO NOT RUN THIS FILE MULTIPLE TIMES as it will create unncessary multiple stores ❌❌❌❌❌❌❌
+
 import os
 import time
 from dotenv import load_dotenv
