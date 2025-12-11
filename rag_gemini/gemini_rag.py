@@ -5,6 +5,10 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+"""
+This module implements the Gemini RAG (Retrieval-Augmented Generation) logic.
+이 모듈은 Gemini RAG(검색 기반 생성) 로직을 구현합니다.
+"""
 # Load API
 api_key = os.getenv("GEMINI_API_KEY")
 if not api_key:

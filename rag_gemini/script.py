@@ -1,3 +1,7 @@
+"""
+Utility script for various RAG system operations.
+RAG 시스템의 다양한 작업을 위한 유틸리티 스크립트입니다.
+"""
 import os
 from google import genai
 from dotenv import load_dotenv

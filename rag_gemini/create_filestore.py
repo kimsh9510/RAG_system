@@ -3,6 +3,11 @@
 # Used for the initial creation of File Search store for RAG with Gemini models
 # ❌❌❌❌❌❌❌ DO NOT RUN THIS FILE MULTIPLE TIMES as it will create unncessary multiple stores ❌❌❌❌❌❌❌
 
+#❌❌❌❌❌❌❌ 이 파일을 여러 번 실행하지 마세요. 불필요한 여러 스토어가 생성됩니다. ❌❌❌❌❌❌❌
+"""
+This script creates a filestore for document storage and retrieval.
+문서 저장 및 검색을 위한 파일스토어를 생성하는 스크립트입니다.
+"""
 import os
 import time
 from dotenv import load_dotenv
