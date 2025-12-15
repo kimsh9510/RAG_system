@@ -1,5 +1,6 @@
 import os
 import time
+import requests
 from google import genai
 from dotenv import load_dotenv
 
@@ -44,22 +45,3 @@ def gemini_rag_answer(question: str):
     })
 
     return response.text
-
-
-# ----------------------------------------------------------
-#  B) Gemini RAG → GPT final reasoning
-#     (Not used now, but ready for later)
-# ----------------------------------------------------------
-def gemini_retrieve_chunks(question: str):
-    """
-    Retrieve top document chunks using File Search only.
-    Used for GPT hybrid mode.
-    """
-    result = gemini.fileSearch.search({
-        "fileSearchStoreName": FILE_SEARCH_STORE,
-        "query": question
-    })
-
-    # Each document has: {"content": "..."}
-    all_chunks = [doc["content"] for doc in result.get("documents", [])]
-    return "\n\n".join(all_chunks)
