@@ -118,3 +118,8 @@ wcwidth==0.2.13
 xxhash==3.5.0
 yarl==1.20.1
 zstandard==0.24.0
+
+
+# Web server requirements for running the FastAPI app
+fastapi
+uvicorn[standard]
